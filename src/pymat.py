@@ -144,22 +144,69 @@ class Matrix():
                 transposed_entries.append(self.entries[i*self.n + j])
         return Matrix(*self.to_tuple_form(transposed_entries, self.m, self.n))
     
+    def _determinant(self, _internal=False) -> float:
+        if self.n == 1:
+            return self.entries[0]
+        elif self.n == 2:
+            return self.entries[0] * self.entries[3] - self.entries[1] * self.entries[2]
+
+        if self.use_C:
+            return cmat.mat_det(self.entries, self.n)
+
+        if not _internal:
+            yellow_bold: str = "\033[1;33m"
+            reset: str = "\033[0m"
+            print(f"{yellow_bold}Just a heads up!{reset} "
+                f"The python implementation of determinant uses Laplace expansion, which is very slow for large matrices (O(n!)). Consider using the C implementation for better performance. Set use_C=False to force Python, or disable_perf_hints=True to turn off this warning.")
+
+        def laplace_expansion(entries, n) -> float:
+            if n == 2:
+                return entries[0] * entries[3] - entries[1] * entries[2]
+            det = 0.0
+            for j in range(n):
+                minor_entries = []
+                for row in range(1, n):
+                    for col in range(n):
+                        if col == j:
+                            continue
+                        minor_entries.append(entries[row * n + col])
+                sign = 1 if j % 2 == 0 else -1
+                element = entries[j]
+                det += sign * element * laplace_expansion(tuple(minor_entries), n - 1)
+            return det
+
+        return laplace_expansion(self.entries, self.n)
+
     @alias("det")
     @property
     @validate_dimensions("square")
     def determinant(self) -> float:
-        """RETURNS DETERMINANT OF MATRIX"""
-        if self.n == 1:
-            return self.entries[0]
-        elif self.n == 2:
-            return self.entries[0]*self.entries[3] - self.entries[1]*self.entries[2]
-        
-        if self.use_C:
-            return cmat.mat_det(self.entries, self.n)
-        
-        """TO IMPLEMENT PYTHONIC VERSION, LAPLACE EXPANSION"""
-        
+        return self._determinant(_internal=False)
 
+    @alias("inv", "INV")
+    @property
+    @validate_dimensions("square")
+    def inverse(self) -> Self:
+        det = self._determinant(_internal=True)
+        if abs(det) < 1e-12:
+            raise ValueError("Matrix is singular and cannot be inverted.")
+
+        if self.n == 1:
+            return Matrix((1.0 / self.entries[0],))
+        elif self.n == 2:
+            inv_entries: list[float] = [
+                self.entries[3] / det,
+                -self.entries[1] / det,
+                -self.entries[2] / det,
+                self.entries[0] / det
+            ]
+            return Matrix(*self.to_tuple_form(inv_entries, 2, 2))
+
+        if self.use_C:
+            inv_entries = cmat.mat_inv(self.entries, self.n)
+            return Matrix(*self.to_tuple_form(inv_entries, self.n, self.n))
+
+        raise NotImplementedError("Inverse for matrices larger than 2x2 is not implemented in pure Python.")
 
     @validate_dimensions("elementwise")
     @performance_warning()
@@ -233,45 +280,37 @@ class Matrix():
         """SCALAR MATRIX MULTIPLICATION HELPER"""
         return Matrix(*Matrix.to_tuple_form([other*i for i in self.entries], self.n, self.m))
 
+
+import time
+
+def benchmark(size, use_c):
+    A = Matrix.R(size, size)
+    A.use_C = use_c
+
+    start = time.perf_counter()
+    _ = A.inv
+    end = time.perf_counter()
+
+    return end - start
+
+
 if __name__ == "__main__":
-    print("--- Matrix Determinant Tests ---")
+    sizes = [10, 25, 50, 100, 150, 200, 300, 400]
 
-    # 1. Test 2x2 Case (Handled by your Python logic)
-    # det = (1*4) - (2*3) = -2
-    m2x2 = Matrix((1, 2), (3, 4))
-    print(f"2x2 Matrix:\n{m2x2}")
-    print(f"Determinant: {m2x2.det} | Expected: -2.0")
-    print("-" * 30)
+    print("\nMatrix Inversion Benchmark\n")
 
-    # 2. Test 3x3 Case (This will trigger cmat.det if use_C is True)
-    # Using a known matrix where det = 0
-    m3x3_singular = Matrix(
-        (1, 2, 3),
-        (4, 5, 6),
-        (7, 8, 9)
-    )
-    print(f"3x3 Singular Matrix:\n{m3x3_singular}")
-    print(f"Determinant: {m3x3_singular.det} | Expected: 0.0")
-    print("-" * 30)
+    for n in sizes:
+        # Run without C
+        t_py = benchmark(n, use_c=False)
 
-    # 3. Test Identity Matrix
-    size = 4
-    m_ident = Matrix.identity(size)
-    print(f"{size}x{size} Identity Matrix:\n{m_ident}")
-    print(f"Determinant: {m_ident.det} | Expected: 1.0")
-    print("-" * 30)
+        # Run with C
+        t_c = benchmark(n, use_c=True)
 
-    # 4. Test Error Handling (Non-square matrix)
-    try:
-        m_rect = Matrix((1, 2, 3), (4, 5, 6))
-        print("Testing non-square determinant...")
-        _ = m_rect.det
-    except Exception as e:
-        print(f"Caught expected error for non-square matrix: {e}")
+        diff = t_py - t_c
+        speedup = t_py / t_c if t_c > 0 else float("inf")
 
-    # 5. Scalar Multiplication & Det check
-    # det(kA) = k^n * det(A)
-    k = 2
-    m_scaled = m2x2 * k
-    print(f"\nScaled 2x2 (factor {k}):\n{m_scaled}")
-    print(f"New Det: {m_scaled.det} | Expected (k^2 * -2): -8.0")
+        print(f"Size {n:>3}x{n:<3} | "
+              f"Python: {t_py:8.4f}s | "
+              f"C: {t_c:8.4f}s | "
+              f"Δ: {diff:8.4f}s | "
+              f"Speedup: {speedup:6.2f}x")

@@ -68,6 +68,12 @@ _lib.mat_det.argtypes = [
 ]
 _lib.mat_det.restype = ctypes.c_double
 
+_lib.mat_inv.argtypes = [
+    ctypes.POINTER(ctypes.c_double),
+    ctypes.POINTER(ctypes.c_double),
+    ctypes.c_int
+]
+_lib.mat_inv.restype = None
 
 @alias("Help")
 class Helpers():
@@ -162,3 +168,14 @@ def mat_det(A, n):
     result = _lib.mat_det(A_arr, n)
     
     return float(result)
+
+def mat_inv(A, n):
+    if len(A) != n * n:
+        raise ValueError("Matrix list size does not match provided dimensions.")
+
+    A_arr = Help._to_c_array(A)
+    C_arr = Help._new_c_array(n * n)
+
+    _lib.mat_inv(A_arr, C_arr, ctypes.c_int(n))
+
+    return Help._to_py_list(C_arr, n * n)
