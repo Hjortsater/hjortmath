@@ -1,11 +1,11 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="matmath",
+    name="hjortmath",
     version="0.1.0",
     packages=find_packages(),
     package_data={
-        'matmath': ['*.so', '*.c'],  # Include C extensions
+        'hjortmath': ['*.so', '*.c'],  # Include C extensions
     },
     author="Erik Hjortsäter",
     description="A matrix library with C backend",
