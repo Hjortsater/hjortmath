@@ -7,7 +7,11 @@ Matrices are flattened row-major lists of doubles.
 All functions return a new Python list.
 """
 
-from imports import *
+from .imports import *
+from .customdecorators import alias
+
+if TYPE_CHECKING:
+        Help = Helpers
 
 _lib = ctypes.CDLL(os.path.join(os.path.dirname(__file__), "libcmat.so"))
 

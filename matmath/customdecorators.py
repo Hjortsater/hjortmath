@@ -1,11 +1,10 @@
-from __future__ import annotations # Fixes the "Matrix not defined" error
+# src/customdecorators.py
+from __future__ import annotations
 from functools import wraps
 from typing import Callable, Any, TYPE_CHECKING
 
-
 if TYPE_CHECKING:
-    Help = Helpers
-
+    from .pymat import Matrix
 
 def alias(*names):
     """
@@ -31,7 +30,6 @@ def alias(*names):
                 setattr(owner, name, self.func)
 
             def __get__(self, instance, owner):
-
                 if hasattr(self.func, "__get__"):
                     return self.func.__get__(instance, owner)
                 return self.func
@@ -39,17 +37,10 @@ def alias(*names):
         return AliasDescriptor(obj)
     return decorator
 
-
-
-
-if TYPE_CHECKING:
-    from your_filename import Matrix 
-
 def validate_dimensions(op_type: str) -> Callable:
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         def wrapper(self: 'Matrix', *args: Any) -> Any:
-
             if op_type == "square":
                 if self.m != self.n:
                     raise ValueError(f"Matrix must be square for {func.__name__} (got {self.m}x{self.n})")
@@ -61,7 +52,7 @@ def validate_dimensions(op_type: str) -> Callable:
                 return func(self)
             
             other = args[0]
-            if type(other).__name__ != "Matrix":
+            if not hasattr(other, 'm') or not hasattr(other, 'n'):
                 return func(self, other)
             
             if op_type == "elementwise":
@@ -76,13 +67,10 @@ def validate_dimensions(op_type: str) -> Callable:
         return wrapper
     return decorator
 
-
-
 def performance_warning(threshold: int = 50_000) -> Callable:
     def decorator(func: Callable) -> Callable:
         @wraps(func)
-        def wrapper(self, *args, _internal=False, **kwargs):
-
+        def wrapper(self, *args, **kwargs):
             is_disabled = getattr(self, "disable_perf_hints", False)
 
             if not is_disabled and getattr(self, "force_C", False):

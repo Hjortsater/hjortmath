@@ -1,5 +1,6 @@
-from imports import *
-import cmat
+from .imports import *
+from . import cmat
+from .customdecorators import alias, validate_dimensions, performance_warning
 
 class Matrix:
     """
@@ -304,81 +305,3 @@ class Matrix:
         C_entries: List[float] = cmat.hadamard(self.entries, other.entries, self.m, self.n)
         return Matrix._from_flat(C_entries, self.n, self.m)
 
-
-import warnings
-import statistics
-import time
-
-if __name__ == "__main__":
-    warnings.filterwarnings("ignore")
-
-    def run_comprehensive_benchmark(size: int, iterations: int = 5) -> None:
-        A: Matrix = Matrix.random(size, size)
-        B: Matrix = Matrix.random(size, size)
-        A.disable_perf_hints = True
-        
-        results: dict[str, dict[str, List[float]]] = {
-            "Addition": {"Py": [], "C": []},
-            "Multiplication": {"Py": [], "C": []},
-            "Inversion": {"Py": [], "C": []},
-            "Determinant": {"Py": [], "C": []}
-        }
-
-        for _ in range(iterations):
-            A.force_C = False
-            start_add_py: float = time.perf_counter()
-            _ = A + B
-            results["Addition"]["Py"].append(time.perf_counter() - start_add_py)
-            
-            A.force_C = True
-            start_add_c: float = time.perf_counter()
-            _ = A + B
-            results["Addition"]["C"].append(time.perf_counter() - start_add_c)
-
-            A.use_C = False
-            start_mul_py: float = time.perf_counter()
-            _ = A * B
-            results["Multiplication"]["Py"].append(time.perf_counter() - start_mul_py)
-            
-            A.use_C = True
-            start_mul_c: float = time.perf_counter()
-            _ = A * B
-            results["Multiplication"]["C"].append(time.perf_counter() - start_mul_c)
-
-            if A.use_C:
-                start_inv: float = time.perf_counter()
-                _ = A.inverse
-                results["Inversion"]["C"].append(time.perf_counter() - start_inv)
-                
-            if size <= 8: 
-                A.use_C = False
-                start_det_py: float = time.perf_counter()
-                _ = A.determinant
-                results["Determinant"]["Py"].append(time.perf_counter() - start_det_py)
-            
-            A.use_C = True
-            start_det_c: float = time.perf_counter()
-            _ = A.determinant
-            results["Determinant"]["C"].append(time.perf_counter() - start_det_c)
-
-        print(f"\nMatrix Size: {size}x{size}")
-        print(f"{'Operation':<15} | {'Py Avg (s)':<12} | {'C Avg (s)':<12} | {'Speedup'}")
-        print("-" * 60)
-        for op, modes in results.items():
-            py_vals: List[float] = modes["Py"]
-            c_vals: List[float] = modes["C"]
-            
-            py_avg: float = statistics.mean(py_vals) if py_vals else 0.0
-            c_avg: float = statistics.mean(c_vals) if c_vals else 0.0
-            
-            py_str: str = f"{py_avg:.6f}" if py_avg > 0 else "N/A"
-            c_str: str = f"{c_avg:.6f}" if c_avg > 0 else "N/A"
-            speedup: str = f"{py_avg/c_avg:.1f}x" if (py_avg > 0 and c_avg > 0) else "N/A"
-            
-            print(f"{op:<15} | {py_str:<12} | {c_str:<12} | {speedup}")
-
-    run_comprehensive_benchmark(size=25, iterations=10)
-    run_comprehensive_benchmark(size=50, iterations=10)
-    run_comprehensive_benchmark(size=100, iterations=5)
-    run_comprehensive_benchmark(size=200, iterations=5)
-    run_comprehensive_benchmark(size=400, iterations=5)
