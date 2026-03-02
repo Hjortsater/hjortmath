@@ -132,9 +132,9 @@ static PyObject* py_matrix_add_inplace(PyObject* self, PyObject* args, PyObject*
     Matrix* C = PyCapsule_GetPointer(capsule_c, "hjortMatrixWrapper.Matrix");
 
     if(!matrix_add_inplace(A, B, C, multithreaded))
-        Py_RETURN_NONE;
+        Py_RETURN_FALSE;
 
-    Py_RETURN_NONE;
+    Py_RETURN_TRUE;
 }
 
 static PyObject* py_matrix_sub(PyObject* self, PyObject* args, PyObject* kwargs) {
@@ -153,6 +153,26 @@ static PyObject* py_matrix_sub(PyObject* self, PyObject* args, PyObject* kwargs)
 
     return wrap_matrix(C);
 }
+
+static PyObject* py_matrix_sub_inplace(PyObject* self, PyObject* args, PyObject* kwargs) {
+    PyObject *capsule_a, *capsule_b, *capsule_c;
+    int multithreaded = 1;
+    static char *kwlist[] = {"A", "B", "C", "multithreaded", NULL};
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OOO|p", kwlist,
+                                     &capsule_a, &capsule_b, &capsule_c, &multithreaded))
+        return NULL;
+
+    Matrix* A = PyCapsule_GetPointer(capsule_a, "hjortMatrixWrapper.Matrix");
+    Matrix* B = PyCapsule_GetPointer(capsule_b, "hjortMatrixWrapper.Matrix");
+    Matrix* C = PyCapsule_GetPointer(capsule_c, "hjortMatrixWrapper.Matrix");
+
+    if(!matrix_sub_inplace(A, B, C, multithreaded))
+        Py_RETURN_FALSE;
+
+    Py_RETURN_TRUE;
+}
+
 
 static PyObject* py_matrix_mul(PyObject* self, PyObject* args, PyObject* kwargs) {
     PyObject *capsule_a, *capsule_b;
@@ -258,6 +278,7 @@ static PyMethodDef HjortMatrixWrapperMethods[] = {
     {"matrix_add", (PyCFunction)py_matrix_add, METH_VARARGS | METH_KEYWORDS, ""},
     {"matrix_add_inplace", (PyCFunction)py_matrix_add_inplace, METH_VARARGS | METH_KEYWORDS, ""},
     {"matrix_sub", (PyCFunction)py_matrix_sub, METH_VARARGS | METH_KEYWORDS, ""},
+    {"matrix_sub_inplace", (PyCFunction)py_matrix_sub_inplace, METH_VARARGS | METH_KEYWORDS, ""},
     {"matrix_mul", (PyCFunction)py_matrix_mul, METH_VARARGS | METH_KEYWORDS, ""},
     {"matrix_seed_random", py_matrix_seed_random, METH_VARARGS, ""},
     {"matrix_fill_random", py_matrix_fill_random, METH_VARARGS, ""},

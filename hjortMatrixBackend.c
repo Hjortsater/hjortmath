@@ -245,6 +245,36 @@ Matrix* matrix_sub(const Matrix* restrict A,
     return C;
 }
 
+Matrix* matrix_sub_inplace(const Matrix* restrict A,
+                           const Matrix* restrict B,
+                           Matrix* restrict C,
+                           int multithreaded) {
+
+    /* This function is identical to sub except it writes to an allocated memory buffer, restric C.*/
+    if(!A || !B || !C || A->m != B->m || A->n != B->n || C->m != A->m || C->n != A->n)
+        return NULL;
+
+    size_t size = (size_t)A->m * A->n;
+    double* restrict a = A->data;
+    double* restrict b = B->data;
+    double* restrict c = C->data;
+
+#if defined(_OPENMP)
+    if(multithreaded){
+        #pragma omp parallel for schedule(static)
+        for(size_t i = 0; i < size; i++)
+            c[i] = a[i] - b[i];
+        return C;
+    }
+#endif
+
+    for(size_t i = 0; i < size; i++)
+        c[i] = a[i] - b[i];
+
+    return C;
+}
+
+
 Matrix* matrix_mul(Matrix* A, Matrix* B, int multithreaded){
 
     /* Borrowed matrix multiplication BLAS implementation. Difficult to compete with its speed!*/

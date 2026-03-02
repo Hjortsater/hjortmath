@@ -108,7 +108,21 @@ class Matrix:
             use_color=self._flags.use_color,
             multithreaded=self._flags.multithreaded
         )
-        
+    
+    def __iadd__(self, other: Self) -> Self:
+        if not isinstance(other, Matrix):
+            raise NotImplementedError
+        if self.m != other.m or self.n != other.n:
+            raise ValueError("Matrix dimensions must match for addition.")
+        if not CFunc.matrix_add_inplace(
+            self._ptr,
+            other._ptr,
+            self._ptr,
+            int(self._flags.multithreaded)
+        ):
+            raise RuntimeError("C backend failed in inplace addition.")
+        return self
+            
     def __sub__(self, other: Self) -> Self:
         """Subtract two matrices using the C backend and return a new Matrix."""
         if not isinstance(other, Matrix):
@@ -127,7 +141,21 @@ class Matrix:
             use_color=self._flags.use_color,
             multithreaded=self._flags.multithreaded
         )
-    
+
+    def __isub__(self, other: Self) -> Self:
+        if not isinstance(other, Matrix):
+            raise NotImplementedError
+        if self.m != other.m or self.n != other.n:
+            raise ValueError("Matrix dimensions must match for subtraction.")
+        if not CFunc.matrix_sub_inplace(
+            self._ptr,
+            other._ptr,
+            self._ptr,
+            int(self._flags.multithreaded)
+        ):
+            raise RuntimeError("C backend failed in inplace subtraction.")
+        return self
+
     def __mul__(self, other: Self) -> Self:
         """Multiply two matrices using the C backend and return a new Matrix."""
         if not isinstance(other, Matrix):
