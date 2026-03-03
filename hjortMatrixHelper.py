@@ -23,8 +23,10 @@ class CFunc:
     matrix_sub = _lib.matrix_sub
     matrix_sub_inplace = _lib.matrix_sub_inplace
     matrix_mul = _lib.matrix_mul
+    matrix_mul_inplace = _lib.matrix_mul_inplace
     matrix_seed_random = _lib.matrix_seed_random
     matrix_fill_random = _lib.matrix_fill_random
     matrix_create_from_buffer = _lib.matrix_create_from_buffer
     matrix_determinant = _lib.matrix_determinant
+    matrix_log_determinant = _lib.matrix_log_determinant
     matrix_to_list = _lib.matrix_to_list

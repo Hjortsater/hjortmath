@@ -1,8 +1,10 @@
 #include <stdlib.h>
 #include <stdio.h>
+#include <math.h>
 #include <omp.h>
 #include <time.h>
 #include <cblas.h>
+
 
 /*
 
@@ -117,7 +119,7 @@ double matrix_get_max(Matrix* M){
         // Fatal Matrix reference or data error, return immediately
     }
     int size = M->m * M-> n;
-    double largest;
+    double largest = M->data[0];
     for (int i=0; i<size; i++){
         double ith = M->data[i];
         if (ith > largest){
@@ -132,7 +134,7 @@ double matrix_get_min(Matrix* M){
         // Fatal Matrix reference or data error, return immediately
     }
     int size = M->m * M-> n;
-    double smallest;
+    double smallest = M->data[0];
     for (int i=0; i<size; i++){
         double ith = M->data[i];
         if (ith < smallest){
@@ -303,18 +305,229 @@ Matrix* matrix_mul(Matrix* A, Matrix* B, int multithreaded){
     return C;
 }
 
-double matrix_determinant(const Matrix* M){
-    if (!M) {
-        // Fatal matrix reference, return immediately
+Matrix* matrix_mul_inplace(Matrix* A, Matrix* B, Matrix* C, int multithreaded){
+
+    /* Borrowed matrix multiplication BLAS implementation. Difficult to compete with its speed!*/
+    if (!A || !B || !C || A->n != B->m ||
+        C->m != A->m || C->n != B->n){
+        // Fatal Matrix reference or dimension error, return immediately.
+        return NULL;
+    }
+    
+    #ifdef _OPENMP
+    if (multithreaded) {
+        openblas_set_num_threads(omp_get_max_threads());
+    } else {
+        openblas_set_num_threads(1);
+    }
+    #endif
+    
+    cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                A->m, B->n, A->n,
+                1.0, A->data, A->n,
+                B->data, B->n,
+                0.0, C->data, B->n);
+    
+    return C;
+}
+
+inline int matrix_lu_decompose(Matrix* M, int multithreaded); // Needed for determinant calculation
+
+
+double matrix_determinant(const Matrix* M, int multithreaded) {
+    if (!M || M->m != M->n)
+        return 0.0;
+
+    int n = M->n;
+
+    /* Make a copy because LU modifies the matrix */
+    Matrix temp;
+    temp.m = n;
+    temp.n = n;
+    temp.data = malloc(sizeof(double) * n * n);
+    if (!temp.data)
+        return 0.0;
+
+    for (int i = 0; i < n * n; i++)
+        temp.data[i] = M->data[i];
+
+    int swap_count = matrix_lu_decompose(&temp, multithreaded);
+
+    if (swap_count < 0) {
+        free(temp.data);
         return 0.0;
     }
-    int m = M->m; int n = M->n; double* e = M->data;
-    // 1x1 case
-    if (m == 1 && n == 1){
-        return e[0];
+
+    double det = 1.0;
+
+    // Product of diagonal elements of U
+    for (int i = 0; i < n; i++)
+        det *= temp.data[i*n + i];
+
+    // Adjust sign based on row swaps
+    if (swap_count % 2 != 0)
+        det = -det;
+
+    free(temp.data);
+    return det;
+}
+
+double matrix_log_determinant(const Matrix* M, int* sign) {
+    if (!M || M->m != M->n)
+        return -INFINITY;
+
+    int n = M->n;
+
+    Matrix temp;
+    temp.m = n;
+    temp.n = n;
+    temp.data = malloc(sizeof(double) * n * n);
+    if (!temp.data)
+        return -INFINITY;
+
+    for (int i = 0; i < n*n; i++)
+        temp.data[i] = M->data[i];
+
+    int swap_count = matrix_lu_decompose(&temp, 0);
+    if (swap_count < 0) {
+        free(temp.data);
+        return -INFINITY;
     }
-    // 2x2 case
-    if (m == 2 && n == 2){
-        return e[0]*e[3]-e[2]*e[1];
+
+    double log_det = 0.0;
+    int s = (swap_count % 2 == 0) ? 1 : -1;
+
+    for (int i = 0; i < n; i++) {
+        double diag = temp.data[i*n + i];
+        if (diag < 0) {
+            s *= -1;
+            diag = -diag;
+        }
+        log_det += log(diag);
     }
+
+    free(temp.data);
+
+    if (sign)
+        *sign = s;
+
+    return log_det;
+}
+
+#define BLOCK_SIZE 64
+#define EPS 1e-12
+
+inline int matrix_lu_decompose(Matrix* M, int multithreaded) {
+    if (!M || M->m != M->n)
+        return -1;
+
+    int n = M->n;
+    double* a = M->data;
+    int swap_count = 0;
+
+    for (int k = 0; k < n; k += BLOCK_SIZE) {
+
+        int bk = (k + BLOCK_SIZE > n) ? (n - k) : BLOCK_SIZE;
+
+        /* 1. Factor diagonal block */
+        for (int kk = 0; kk < bk; kk++) {
+
+            int col = k + kk;
+
+            // Pivoting
+            int pivot = col;
+            double max = fabs(a[col*n + col]);
+
+            for (int i = col + 1; i < n; i++) {
+                double val = fabs(a[i*n + col]);
+                if (val > max) {
+                    max = val;
+                    pivot = i;
+                }
+            }
+
+            if (max < EPS)
+                return -1;
+
+            if (pivot != col) {
+                for (int j = 0; j < n; j++) {
+                    double tmp = a[col*n + j];
+                    a[col*n + j] = a[pivot*n + j];
+                    a[pivot*n + j] = tmp;
+                }
+                swap_count++;
+            }
+
+            // Eliminate inside panel
+            for (int i = col + 1; i < n; i++) {
+                a[i*n + col] /= a[col*n + col];
+                double factor = a[i*n + col];
+                for (int j = col + 1; j < k + bk; j++)
+                    a[i*n + j] -= factor * a[col*n + j];
+            }
+        }
+
+        if (k + bk >= n)
+            continue;
+
+        /* Solve U12 block
+           L11 * U12 = A12
+           Use BLAS triangular solve */
+        cblas_dtrsm(
+            CblasRowMajor,
+            CblasLeft,
+            CblasLower,
+            CblasNoTrans,
+            CblasUnit,
+            bk,
+            n - k - bk,
+            1.0,
+            &a[k*n + k], n,
+            &a[k*n + k + bk], n
+        );
+
+        /* Update trailing matrix
+           A22 -= L21 * U12
+           Use GEMM (parallelized I believe) */
+
+        int rows = n - k - bk;
+        int cols = n - k - bk;
+
+        if (multithreaded) {
+            #pragma omp parallel for schedule(static)
+            for (int i = 0; i < rows; i += BLOCK_SIZE) {
+                int ib = (i + BLOCK_SIZE > rows) ? (rows - i) : BLOCK_SIZE;
+
+                cblas_dgemm(
+                    CblasRowMajor,
+                    CblasNoTrans,
+                    CblasNoTrans,
+                    ib,
+                    cols,
+                    bk,
+                    -1.0,
+                    &a[(k + bk + i)*n + k], n,
+                    &a[k*n + k + bk], n,
+                    1.0,
+                    &a[(k + bk + i)*n + k + bk], n
+                );
+            }
+        } else {
+            cblas_dgemm(
+                CblasRowMajor,
+                CblasNoTrans,
+                CblasNoTrans,
+                rows,
+                cols,
+                bk,
+                -1.0,
+                &a[(k + bk)*n + k], n,
+                &a[k*n + k + bk], n,
+                1.0,
+                &a[(k + bk)*n + k + bk], n
+            );
+        }
+    }
+
+    return swap_count;
 }

@@ -1,6 +1,7 @@
 from __future__ import annotations
-from typing import Any, Optional, Union, Tuple, List
+from typing import Any, Optional, Union
 from hjortMatrixHelper import CFunc
+from hjortDecorators import *
 
 """
 
@@ -174,7 +175,22 @@ class Matrix:
             use_color=self._flags.use_color,
             multithreaded=self._flags.multithreaded
         )
-        
+
+    def __imul__(self, other: Self) -> Self:
+        """In-place matrix multiplication using the C backend."""
+        if not isinstance(other, Matrix):
+            raise NotImplementedError
+        if self.n != other.m:
+            raise ValueError("Matrix dimensions must match for multiplication.")
+        if not CFunc.matrix_mul_inplace(
+            self._ptr,
+            other._ptr,
+            self._ptr,
+            int(self._flags.multithreaded)
+        ):
+            raise RuntimeError("C backend failed in inplace multiplication.")
+        return self
+    
 
     ### PROPERTIES
 
@@ -207,7 +223,17 @@ class Matrix:
 
         return cls.__init__C_native(ptr, **flags)
     
+
+    @alias("det")
     @property
     def determinant(self) -> float:
         if self.n and self.m:
-            return CFunc.matrix_determinant(self._ptr)
+            return CFunc.matrix_determinant(self._ptr, self._flags.multithreaded)
+   
+
+    @alias("logdet","ldet")
+    @property
+    def log_determinant(self) -> float:
+        if self.n and self.m:
+            return CFunc.matrix_log_determinant(self._ptr)
+    

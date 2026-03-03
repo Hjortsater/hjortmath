@@ -191,6 +191,25 @@ static PyObject* py_matrix_mul(PyObject* self, PyObject* args, PyObject* kwargs)
     return wrap_matrix(C);
 }
 
+static PyObject* py_matrix_mul_inplace(PyObject* self, PyObject* args, PyObject* kwargs) {
+    PyObject *capsule_a, *capsule_b, *capsule_c;
+    int multithreaded = 1;
+    static char *kwlist[] = {"A", "B", "C", "multithreaded", NULL};
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OOO|p", kwlist,
+                                     &capsule_a, &capsule_b, &capsule_c, &multithreaded))
+        return NULL;
+
+    Matrix* A = PyCapsule_GetPointer(capsule_a, "hjortMatrixWrapper.Matrix");
+    Matrix* B = PyCapsule_GetPointer(capsule_b, "hjortMatrixWrapper.Matrix");
+    Matrix* C = PyCapsule_GetPointer(capsule_c, "hjortMatrixWrapper.Matrix");
+
+    if(!matrix_mul_inplace(A, B, C, multithreaded))
+        Py_RETURN_FALSE;
+
+    Py_RETURN_TRUE;
+}
+
 static PyObject* py_matrix_seed_random(PyObject* self, PyObject* args) {
     unsigned int seed;
     if (!PyArg_ParseTuple(args, "I", &seed)) return NULL;
@@ -223,15 +242,41 @@ static PyObject* py_matrix_get_min(PyObject* self, PyObject* args) {
     return PyFloat_FromDouble(matrix_get_min(M));
 }
 
-static PyObject* py_matrix_determinant(PyObject* self, PyObject* args) {
+static PyObject* py_matrix_determinant(PyObject* self, PyObject* args, PyObject* kwargs) {
     PyObject* capsule;
-    if (!PyArg_ParseTuple(args, "O", &capsule))
+    int multithreaded = 1;
+    static char *kwlist[] = {"A", "multithreaded", NULL};
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|p", kwlist,
+                                     &capsule, &multithreaded))
         return NULL;
+
     Matrix* M = PyCapsule_GetPointer(capsule, "hjortMatrixWrapper.Matrix");
     if (!M)
         return NULL;
-    double det = matrix_determinant(M);
+
+    double det;
+
+    Py_BEGIN_ALLOW_THREADS
+    det = matrix_determinant(M, multithreaded);
+    Py_END_ALLOW_THREADS
+
     return PyFloat_FromDouble(det);
+}
+
+static PyObject* py_matrix_log_determinant(PyObject* self, PyObject* args) {
+    PyObject* capsule;
+    if (!PyArg_ParseTuple(args, "O", &capsule))
+        return NULL;
+
+    Matrix* M = PyCapsule_GetPointer(capsule, "hjortMatrixWrapper.Matrix");
+    if (!M)
+        return NULL;
+
+    int sign = 0;
+    double logdet = matrix_log_determinant(M, &sign);
+
+    return PyFloat_FromDouble(sign * logdet);
 }
 
 
@@ -280,11 +325,13 @@ static PyMethodDef HjortMatrixWrapperMethods[] = {
     {"matrix_sub", (PyCFunction)py_matrix_sub, METH_VARARGS | METH_KEYWORDS, ""},
     {"matrix_sub_inplace", (PyCFunction)py_matrix_sub_inplace, METH_VARARGS | METH_KEYWORDS, ""},
     {"matrix_mul", (PyCFunction)py_matrix_mul, METH_VARARGS | METH_KEYWORDS, ""},
+    {"matrix_mul_inplace", (PyCFunction)py_matrix_mul_inplace, METH_VARARGS | METH_KEYWORDS, ""},
     {"matrix_seed_random", py_matrix_seed_random, METH_VARARGS, ""},
     {"matrix_fill_random", py_matrix_fill_random, METH_VARARGS, ""},
     {"matrix_get_max", py_matrix_get_max, METH_VARARGS, ""},
     {"matrix_get_min", py_matrix_get_min, METH_VARARGS, ""},
-    {"matrix_determinant", py_matrix_determinant, METH_VARARGS, ""},
+    {"matrix_determinant", (PyCFunction)py_matrix_determinant, METH_VARARGS | METH_KEYWORDS, ""},
+    {"matrix_log_determinant", py_matrix_log_determinant, METH_VARARGS, ""},
     {"matrix_to_list", py_matrix_to_list, METH_VARARGS, ""},
     {NULL, NULL, 0, NULL}
 };
