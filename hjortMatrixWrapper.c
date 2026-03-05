@@ -85,6 +85,26 @@ static PyObject* py_matrix_fill(PyObject* self, PyObject* args) {
     Py_RETURN_NONE;
 }
 
+static PyObject* py_matrix_zero(PyObject* self, PyObject* args){
+    int m, n;
+    if (!PyArg_ParseTuple(args, "ii", &m, &n)) return NULL;
+
+    Matrix* M = matrix_zero(m, n);
+    if (!M) return PyErr_NoMemory();
+
+    return wrap_matrix(M);
+}
+
+static PyObject* py_matrix_identity(PyObject* self, PyObject* args){
+    int n;
+    if (!PyArg_ParseTuple(args, "i", &n)) return NULL;
+
+    Matrix* M = matrix_identity(n);
+    if (!M) return PyErr_NoMemory();
+
+    return wrap_matrix(M);
+}
+
 static PyObject* py_matrix_rows(PyObject* self, PyObject* args) {
     PyObject* capsule;
     if (!PyArg_ParseTuple(args, "O", &capsule)) return NULL;
@@ -242,6 +262,34 @@ static PyObject* py_matrix_get_min(PyObject* self, PyObject* args) {
     return PyFloat_FromDouble(matrix_get_min(M));
 }
 
+static PyObject* py_matrix_inverse(PyObject* self, PyObject* args, PyObject* kwargs) {
+    PyObject* capsule;
+    int multithreaded = 1;
+    static char *kwlist[] = {"A", "multithreaded", NULL};
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|p", kwlist, &capsule, &multithreaded))
+        return NULL;
+
+    Matrix* A = PyCapsule_GetPointer(capsule, "hjortMatrixWrapper.Matrix");
+    if (!A) {
+        PyErr_SetString(PyExc_ValueError, "Invalid matrix capsule.");
+        return NULL;
+    }
+
+    Matrix* inv = NULL;
+
+    Py_BEGIN_ALLOW_THREADS
+    inv = matrix_inverse(A, multithreaded);
+    Py_END_ALLOW_THREADS
+
+    if (!inv) {
+        PyErr_SetString(PyExc_RuntimeError, "Matrix inversion failed (possibly singular).");
+        return NULL;
+    }
+
+    return wrap_matrix(inv);
+}
+
 static PyObject* py_matrix_determinant(PyObject* self, PyObject* args, PyObject* kwargs) {
     PyObject* capsule;
     int multithreaded = 1;
@@ -318,6 +366,8 @@ static PyMethodDef HjortMatrixWrapperMethods[] = {
     {"matrix_set", py_matrix_set, METH_VARARGS, ""},
     {"matrix_get", py_matrix_get, METH_VARARGS, ""},
     {"matrix_fill", py_matrix_fill, METH_VARARGS, ""},
+    {"matrix_zero", py_matrix_zero, METH_VARARGS, ""},
+    {"matrix_identity", py_matrix_identity, METH_VARARGS, ""},
     {"matrix_rows", py_matrix_rows, METH_VARARGS, ""},
     {"matrix_cols", py_matrix_cols, METH_VARARGS, ""},
     {"matrix_add", (PyCFunction)py_matrix_add, METH_VARARGS | METH_KEYWORDS, ""},
@@ -330,6 +380,7 @@ static PyMethodDef HjortMatrixWrapperMethods[] = {
     {"matrix_fill_random", py_matrix_fill_random, METH_VARARGS, ""},
     {"matrix_get_max", py_matrix_get_max, METH_VARARGS, ""},
     {"matrix_get_min", py_matrix_get_min, METH_VARARGS, ""},
+    {"matrix_inverse", (PyCFunction)py_matrix_inverse, METH_VARARGS | METH_KEYWORDS, ""},
     {"matrix_determinant", (PyCFunction)py_matrix_determinant, METH_VARARGS | METH_KEYWORDS, ""},
     {"matrix_log_determinant", py_matrix_log_determinant, METH_VARARGS, ""},
     {"matrix_to_list", py_matrix_to_list, METH_VARARGS, ""},

@@ -20,12 +20,15 @@ class Matrix:
 
     class _Flags:
         def __init__(self, **kwargs: Any) -> None:
-            """Constructor for the flags helper"""
             self.sig_digits: int = kwargs.get("sig_digits", 3)
             self.use_color: bool = kwargs.get("use_color", True)
             self.multithreaded: bool = kwargs.get("multithreaded", True)
             self.limit_prints: int = kwargs.get("limit_prints", 0)
 
+        def to_dict(self):
+            """Method used to allow easy flag passing between operations"""
+            return vars(self)
+        
     def __init__(self, *rows: Union[int, float, list, tuple], **flags: Any) -> None:
         """Pythonic constructor, slow but Python-native"""
         self._flags: Matrix._Flags = self._Flags(**flags)
@@ -103,12 +106,7 @@ class Matrix:
 
         CFunc.matrix_add_inplace(self._ptr, other._ptr, result_ptr, int(self._flags.multithreaded))
 
-        return Matrix.__init__C_native(
-            result_ptr,
-            sig_digits=self._flags.sig_digits,
-            use_color=self._flags.use_color,
-            multithreaded=self._flags.multithreaded
-        )
+        return Matrix.__init__C_native(result_ptr, **self._flags.to_dict())
     
     def __iadd__(self, other: Self) -> Self:
         if not isinstance(other, Matrix):
@@ -136,12 +134,7 @@ class Matrix:
         if not new_ptr:
             raise MemoryError("C backend failed to allocate result matrix.")
 
-        return Matrix.__init__C_native(
-            new_ptr,
-            sig_digits=self._flags.sig_digits,
-            use_color=self._flags.use_color,
-            multithreaded=self._flags.multithreaded
-        )
+        return Matrix.__init__C_native(new_ptr, **self._flags.to_dict())
 
     def __isub__(self, other: Self) -> Self:
         if not isinstance(other, Matrix):
@@ -169,12 +162,7 @@ class Matrix:
         if not new_ptr:
             raise MemoryError("C backend failed to allocate result matrix.")
         
-        return Matrix.__init__C_native(
-            new_ptr,
-            sig_digits=self._flags.sig_digits,
-            use_color=self._flags.use_color,
-            multithreaded=self._flags.multithreaded
-        )
+        return Matrix.__init__C_native(new_ptr, **self._flags.to_dict())
 
     def __imul__(self, other: Self) -> Self:
         """In-place matrix multiplication using the C backend."""
@@ -222,7 +210,37 @@ class Matrix:
         CFunc.matrix_fill_random(ptr, min_val, max_val)
 
         return cls.__init__C_native(ptr, **flags)
+
+    @alias("Z")
+    @classmethod
+    def zero(cls, m: int, n: int, **flags: Any) -> Self:
+        """Create an m×n zero matrix using the C backend."""
+        ptr: Optional[int] = CFunc.matrix_zero(m, n)
+        if not ptr:
+            raise MemoryError("C backend failed to allocate zero matrix.")
+
+        return cls.__init__C_native(ptr, **flags)
+
+    @alias("I")
+    @classmethod
+    def identity(cls, n: int, **flags: Any) -> Self:
+        """Create an n×n identity matrix using the C backend."""
+        ptr: Optional[int] = CFunc.matrix_identity(n)
+        if not ptr:
+            raise MemoryError("C backend failed to allocate identity matrix.")
+
+        return cls.__init__C_native(ptr, **flags)
     
+    @alias("inv")
+    @property
+    def inverse(self) -> float:
+        if self.n != self.m:
+            raise TypeError(f"Cannot invert non-square matrix. ({self.m} != {self.n})")
+        ptr: Optional[int] = CFunc.matrix_inverse(self._ptr, self._flags.multithreaded)
+        if not ptr:
+            raise MemoryError("C backend failed to invert matrix.")
+        return self.__init__C_native(ptr, **self._flags.to_dict())
+
 
     @alias("det")
     @property
