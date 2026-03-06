@@ -71,13 +71,15 @@ def hjort__repr__(self) -> str:
             padded_str = raw_str.rjust(max_str_len)
             row_content += colorize(padded_str, val, min_val, max_val, use_color) + " "
 
-        if a == 0:
+        if num_rows == 1:
+            left, right = "[", "]"
+        elif a == 0:
             left, right = "⎡", "⎤"
         elif a == num_rows - 1:
             left, right = "⎣", "⎦"
         else:
             left, right = "⎢", "⎥"
 
-        output += f"{left} {row_content.rstrip()} {right}\n"
+        output += f"{left} {row_content.rstrip()} {right}{"\n" if num_rows != 1 else ""}"
 
     return output
