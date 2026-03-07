@@ -6,6 +6,7 @@
 #include <time.h>
 #include <cblas.h>
 #include <lapacke.h>
+#include <sys/time.h>
 
 
 /*

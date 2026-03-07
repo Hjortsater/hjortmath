@@ -61,9 +61,13 @@ class Matrix:
         if hasattr(self, "_ptr") and self._ptr:
             CFunc.matrix_free(self._ptr)
     
+    def __str__(self) -> str:
+        from hjort_str_ import hjort_str_
+        return hjort_str_(self)
+    
     def __repr__(self) -> str:
-        from hjort__repr__ import hjort__repr__
-        return hjort__repr__(self)
+        from hjort_str_ import hjort_str_
+        return hjort_str_(self)
 
     @lazy()
     def __add__(self, other: Matrix) -> Matrix:
@@ -137,6 +141,8 @@ class Matrix:
 
     @classmethod
     def random(cls, m: int, n: int) -> Self:
+        if not m or not n:
+            raise ValueError("Matrix dimensions cannot be zero: {m}x{n}")
         ptr = CFunc.matrix_random(m, n, 0.0, 1.0)
         return cls._init_C_native(ptr)
 
@@ -157,6 +163,9 @@ class Matrix:
     def determinant(self) -> float:
         return CFunc.matrix_determinant(self._ptr, SETTINGS.multithreaded)
 
+    def evaluate(self) -> Self:
+        print("Attempted to evaluate object of type Matrix")
+        print("Perhaps the LazyMatrix intended was already evaluated, or the lazy_eval flag is set to dynamic (1)?")
 
 class LazyMatrix(Matrix):
     class OpEnum(IntEnum):
@@ -164,6 +173,7 @@ class LazyMatrix(Matrix):
         SUB = 1
         RML = 2
         LML = 3
+        DIV = 4
 
     def __init__(self, root: Matrix, ops: list = None) -> None:
         self.root = root
@@ -173,8 +183,11 @@ class LazyMatrix(Matrix):
     def __del__(self) -> None:
         pass
 
+    def __str__(self) -> str:
+        return self.evaluate().__str__()
+
     def __repr__(self) -> str:
-        return repr(self.evaluate())
+        return self.evaluate().__repr__()
 
     def __add__(self, other) -> LazyMatrix:
         return LazyMatrix(self.root, self.ops + [(self.OpEnum.ADD, other)])
@@ -194,8 +207,9 @@ class LazyMatrix(Matrix):
         if isinstance(other, (int, float)): # NOTE Float scalar division
             return LazyMatrix(self.root, self.ops + [(self.OpEnum.LML, 1.0/float(other))])
         
-        if not isinstance(other, (Matrix, LazyMatrix)): # NOTE Inverse matrix right mul
-            pass
+        if isinstance(other, (Matrix, LazyMatrix)):
+            return LazyMatrix(self.root, self.ops + [(self.OpEnum.DIV, other)])        
+        return NotImplemented
 
     def __rtruediv__(self, other) -> LazyMatrix:
         if isinstance(other, (int, float)):
@@ -208,45 +222,25 @@ class LazyMatrix(Matrix):
 
     @alias("compute")
     def evaluate(self) -> Matrix:
-        simplified_ops = []
+
+        ops_capsules = []
+
         for op_type, operand in self.ops:
+
             if isinstance(operand, LazyMatrix):
                 operand = operand.evaluate()
-            
-            if simplified_ops:
-                prev_type, prev_op = simplified_ops[-1]
-                if isinstance(operand, Matrix) and isinstance(prev_op, Matrix):
-                    if operand._ptr == prev_op._ptr:
-                        is_add_sub = (op_type == self.OpEnum.ADD and prev_type == self.OpEnum.SUB)
-                        is_sub_add = (op_type == self.OpEnum.SUB and prev_type == self.OpEnum.ADD)
-                        if is_add_sub or is_sub_add:
-                            simplified_ops.pop()
-                            continue
-            
-            simplified_ops.append((op_type, operand))
-        
-        res_ptr = CFunc.matrix_clone(self.root._ptr)
+
+            if not isinstance(operand, Matrix):
+                raise TypeError("Minimal evaluator only supports Matrix operands")
+
+            ops_capsules.append((int(op_type), operand._ptr))
+
         mt = int(SETTINGS.multithreaded)
 
-        for op_type, op in simplified_ops:
-            if op_type == self.OpEnum.ADD:
-                CFunc.matrix_add_inplace(res_ptr, op._ptr, res_ptr, mt)
-            elif op_type == self.OpEnum.SUB:
-                CFunc.matrix_sub_inplace(res_ptr, op._ptr, res_ptr, mt)
-            elif op_type == self.OpEnum.RML:
-                if isinstance(op, (int, float)):
-                    CFunc.matrix_scalar_mul_inplace(res_ptr, float(op), res_ptr)
-                else:
-                    CFunc.matrix_mul_inplace(res_ptr, op._ptr, res_ptr, mt)
-            elif op_type == self.OpEnum.LML:
-                if isinstance(op, (int, float)):
-                    CFunc.matrix_scalar_mul_inplace(res_ptr, float(op), res_ptr)
-                else:
-                    new_ptr = CFunc.matrix_mul(op._ptr, res_ptr, mt)
-                    CFunc.matrix_free(res_ptr)
-                    res_ptr = new_ptr
+        result_ptr = CFunc.matrix_evaluate_kernel(self.root._ptr, ops_capsules, mt)
 
-        return Matrix._init_C_native(res_ptr)
+        return Matrix._init_C_native(result_ptr)
+
 
     @alias("inv")
     @property

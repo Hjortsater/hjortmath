@@ -1,38 +1,30 @@
 from setuptools import setup, Extension
-import shutil
-import os
 
-if os.path.exists("build"):
-    shutil.rmtree("build")
+common_args = {
+    "extra_compile_args": ["-Wall", "-O3", "-fopenmp", "-mavx2", "-march=x86-64-v3"],
+    "extra_link_args": ["-fopenmp"],
+    "libraries": ["lapacke", "lapack", "openblas"]
+}
 
-module = Extension(
+
+
+# Extension 1: Standard Matrix
+ext1 = Extension(
     "hjortMatrixWrapper",
-    sources=["hjortMatrixWrapper.c"],
-    libraries=[
-        "lapacke",
-        "lapack",
-        "openblas",
-    ],
-    library_dirs=[],
-    include_dirs=[],
-    extra_compile_args=[
-        "-Wall",
-        "-O3",
-        "-fopenmp",
-        "-mavx2",
-        "-march=x86-64-v3",
-        "-D_GNU_SOURCE",
-    ],
-    extra_link_args=["-fopenmp"],
+    sources=["hjortMatrixWrapper.c", "hjortMatrixBackend.c"],
+    **common_args
+)
+
+# Extension 2: Lazy Evaluation
+# ADD 'hjortLazyEvaluate.c' HERE
+ext2 = Extension(
+    "hjortLazyMatrixWrapper",
+    sources=["hjortLazyMatrixWrapper.c", "hjortMatrixBackend.c", "hjortLazyEvaluate.c"],
+    **common_args
 )
 
 setup(
-    name="hjortMatrixWrapper",
+    name="hjortMath",
     version="1.0",
-    ext_modules=[module],
+    ext_modules=[ext1, ext2],
 )
-
-print("\n" + "="*50)
-print("BUILD COMPLETE - Module location:")
-print(os.path.abspath("hjortMatrixWrapper.cpython-312-x86_64-linux-gnu.so"))
-print("="*50 + "\n")

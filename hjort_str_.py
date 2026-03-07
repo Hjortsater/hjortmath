@@ -24,7 +24,7 @@ def colorize(value: str, float_value: float, min_val: float, max_val: float, use
     color_idx = int(normalized * (len(colors) - 1))
     return f"\033[38;5;{colors[color_idx]}m{value}\033[0m"
 
-def hjort__repr__(self) -> str:
+def hjort_str_(self) -> str:
     if self.m == 0 or self.n == 0:
         return "[]"
 

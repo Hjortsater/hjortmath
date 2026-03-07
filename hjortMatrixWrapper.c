@@ -1,6 +1,6 @@
 #include <Python.h>
 #include <stdlib.h>
-#include "hjortMatrixBackend.c"
+#include "hjortMatrixBackend.h"
 
 static PyObject* wrap_matrix(Matrix* M) { return PyCapsule_New(M, "hjortMatrixWrapper.Matrix", NULL); }
 
