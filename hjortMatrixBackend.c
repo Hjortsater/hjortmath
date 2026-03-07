@@ -7,6 +7,7 @@
 #include <cblas.h>
 #include <lapacke.h>
 
+
 /*
 
 This is the C-backend for the Python linear algebra class. It boasts:
@@ -40,6 +41,33 @@ Matrix* matrix_create(int m, int n){
         return NULL;
     }
     return M;
+}
+
+void matrix_copy(const Matrix* src, Matrix* dst){
+    // Matrix copy function
+    if(!src || !dst || src->m != dst->m || src->n != dst->n || !src->data || !dst->data){
+        return;
+    }
+    size_t size = (size_t)(src->m) * (size_t)(src->n);
+    memcpy(dst->data, src->data, size * sizeof(double));
+}
+
+Matrix* matrix_clone(const Matrix* src) {
+    if (!src) return NULL;
+    Matrix* dst = (Matrix*)malloc(sizeof(Matrix));
+    if (!dst) return NULL;
+
+    dst->m = src->m;
+    dst->n = src->n;
+
+    dst->data = (double*)malloc(src->m * src->n * sizeof(double));
+    if (!dst->data) {
+        free(dst);
+        return NULL;
+    }
+
+    memcpy(dst->data, src->data, src->m * src->n * sizeof(double));
+    return dst;
 }
 
 Matrix* matrix_create_from_buffer(size_t m, size_t n, const double* data){
@@ -155,22 +183,24 @@ Matrix* matrix_identity(int m){
     return M;
 }
 
-void matrix_seed_random(unsigned int seed){
+Matrix* matrix_random(int m, int n, double min, double max) {
+    if (m <= 0 || n <= 0) return NULL;
+    
+    Matrix* M = matrix_create(m, n);
+    if (!M) return NULL;
+    
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    unsigned int seed = tv.tv_sec * 1000000 + tv.tv_usec;
     srand(seed);
-}
-
-void matrix_fill_random(Matrix* M, double min, double max){
-    if (!M || !M->data){
-        // Fatal Matrix reference error, return immediately.
-        return;
-    }
-
-    matrix_seed_random((unsigned int)time(NULL));
+    
     double range = max - min;
-    for (int i = 0; i < M->m * M->n; i++){
-        double r = (double)rand() / (double)RAND_MAX; // 0..1
+    for (int i = 0; i < m * n; i++) {
+        double r = (double)rand() / (double)RAND_MAX;
         M->data[i] = min + r * range;
     }
+    
+    return M;
 }
 
 double matrix_get_max(Matrix* M){
@@ -384,6 +414,38 @@ Matrix* matrix_mul_inplace(Matrix* A, Matrix* B, Matrix* C, int multithreaded){
     return C;
 }
 
+Matrix* matrix_scalar_mul(Matrix* A, double scalar, int multithreaded) {
+    if (!A) return NULL;
+    
+    Matrix* C = matrix_create(A->m, A->n);
+    if (!C) return NULL;
+    
+    #ifdef _OPENMP
+    #pragma omp parallel for if(multithreaded)
+    #endif
+    for (int i = 0; i < A->m * A->n; i++) {
+        C->data[i] = A->data[i] * scalar;
+    }
+    
+    return C;
+}
+
+int matrix_scalar_mul_inplace(Matrix* A, Matrix* C, double scalar, int multithreaded) {
+    if (!A || !C) return 0;
+    if (A->m != C->m || A->n != C->n) return 0;
+    
+    #ifdef _OPENMP
+    #pragma omp parallel for if(multithreaded)
+    #endif
+    for (int i = 0; i < A->m * A->n; i++) {
+        C->data[i] = A->data[i] * scalar;
+    }
+    
+    return 1;
+}
+
+
+
 inline int matrix_lu_decompose(Matrix* M, int multithreaded); // Needed for determinant calculation
 
 Matrix* matrix_inverse(const Matrix* A, int multithreaded){
@@ -419,8 +481,167 @@ Matrix* matrix_inverse(const Matrix* A, int multithreaded){
     return inv;
 }
 
+int matrix_inverse_inplace(const Matrix* A, Matrix* C, int multithreaded) {
+    if (!A || !C || A->m != A->n || C->m != C->n || A->m != C->m) {
+        return 0;
+    }
+    
+    int n = A->n;
+    
+    // Copy input data into C to perform operations in-place
+    memcpy(C->data, A->data, (size_t)(n * n * sizeof(double)));
+
+    int* ipiv = (int*)malloc((size_t)n * sizeof(int));
+    if (!ipiv) {
+        return 0;
+    }
+
+    int info = LAPACKE_dgetrf(LAPACK_ROW_MAJOR, n, n, C->data, n, ipiv);
+    
+    if (info == 0) {
+        info = LAPACKE_dgetri(LAPACK_ROW_MAJOR, n, C->data, n, ipiv);
+    }
+
+    free(ipiv);
+
+    return (info == 0);
+}
+
+
+
+Matrix* matrix_solve(const Matrix* A, const Matrix* B) {
+    if (!A || !B || B->m != B->n || B->n != A->n) return NULL;
+
+    int n = B->n;
+    int nrhs = A->m;
+
+    Matrix* B_copy = matrix_create_from_buffer(n, n, B->data);
+    Matrix* X = matrix_create_from_buffer(A->m, A->n, A->data);
+
+    int* ipiv = (int*)malloc(n * sizeof(int));
+
+    int info = LAPACKE_dgesv(LAPACK_COL_MAJOR, n, nrhs, 
+                              B_copy->data, n, ipiv, 
+                              X->data, n);
+
+    free(ipiv);
+    matrix_free(B_copy);
+    return (info == 0) ? X : (matrix_free(X), NULL);
+}
+
+
+// For symmetric positive definite matrices (faster)
+Matrix* matrix_solve_spd(const Matrix* A, const Matrix* B, int multithreaded) {
+    if (!A || !B || A->m != A->n || A->m != B->m) {
+        return NULL;
+    }
+    
+    int n = A->n;
+    int nrhs = B->n;
+    
+    // Create copies
+    Matrix* A_copy = matrix_create_from_buffer((size_t)n, (size_t)n, A->data);
+    if (!A_copy) return NULL;
+    
+    Matrix* X = matrix_create_from_buffer((size_t)n, (size_t)nrhs, B->data);
+    if (!X) {
+        matrix_free(A_copy);
+        return NULL;
+    }
+    
+    // Solve using Cholesky (A must be symmetric positive definite)
+    int info = LAPACKE_dposv(LAPACK_ROW_MAJOR, 'U', n, nrhs,
+                              A_copy->data, n, X->data, nrhs);
+    
+    matrix_free(A_copy);
+    
+    if (info != 0) {
+        matrix_free(X);
+        return NULL;
+    }
+    
+    return X;
+}
+
+int matrix_factor_lu(Matrix* A, int* ipiv, int multithreaded) {
+    if (!A || A->m != A->n || !ipiv) return 0;
+    
+    int n = A->n;
+    int info = LAPACKE_dgetrf(LAPACK_ROW_MAJOR, n, n, A->data, n, ipiv);
+    return (info == 0);
+}
+
+Matrix* matrix_solve_factored(const Matrix* A_factored, const int* ipiv, 
+                              const Matrix* B, int multithreaded) {
+    if (!A_factored || !ipiv || !B || A_factored->m != B->m) {
+        return NULL;
+    }
+    
+    int n = A_factored->n;
+    int nrhs = B->n;
+    
+    Matrix* X = matrix_create_from_buffer((size_t)n, (size_t)nrhs, B->data);
+    if (!X) return NULL;
+    
+    int info = LAPACKE_dgetrs(LAPACK_ROW_MAJOR, 'N', n, nrhs,
+                               A_factored->data, n, ipiv,
+                               X->data, nrhs);
+    
+    if (info != 0) {
+        matrix_free(X);
+        return NULL;
+    }
+    
+    return X;
+}
+
+Matrix* matrix_solve_lstsq(const Matrix* A, const Matrix* B, int multithreaded) {
+    if (!A || !B || A->m != B->m) return NULL;
+    
+    int m = A->m;
+    int n = A->n;
+    int nrhs = B->n;
+    
+    // Create copies
+    Matrix* A_copy = matrix_create_from_buffer((size_t)m, (size_t)n, A->data);
+    if (!A_copy) return NULL;
+    
+    Matrix* X = matrix_create_from_buffer((size_t)m, (size_t)nrhs, B->data);
+    if (!X) {
+        matrix_free(A_copy);
+        return NULL;
+    }
+    
+    int info = LAPACKE_dgels(LAPACK_ROW_MAJOR, 'N', m, n, nrhs,
+                              A_copy->data, n, X->data, nrhs);
+    
+    matrix_free(A_copy);
+    
+    if (info != 0) {
+        matrix_free(X);
+        return NULL;
+    }
+    
+    Matrix* result = matrix_create(n, nrhs);
+    if (!result) {
+        matrix_free(X);
+        return NULL;
+    }
+    
+    // Copy solution part
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < nrhs; j++) {
+            MAT(result, i, j) = MAT(X, i, j);
+        }
+    }
+    
+    matrix_free(X);
+    return result;
+}
+
 double matrix_determinant(const Matrix* M, int multithreaded){
     if (!M || M->m != M->n){
+        perror("Determinant Matrix error");
         return 0.0;
     }
 
@@ -431,6 +652,7 @@ double matrix_determinant(const Matrix* M, int multithreaded){
     temp.n = n;
     temp.data = (double*)malloc(sizeof(double) * n * n);
     if (!temp.data){
+        perror("Determinant Matrix data error");
         return 0.0;
     }
 

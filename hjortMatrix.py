@@ -20,6 +20,7 @@ class GlobalFlags:
         self.lazy_eval: int = kwargs.get("lazy_eval", 1)
         self.sig_digits: int = kwargs.get("sig_digits", 3)
         self.use_color: bool = kwargs.get("use_color", True)
+        self.suppress_zeroes: str = kwargs.get("suppress_zeroes", " ")
         self.multithreaded: bool = kwargs.get("multithreaded", True)
         self.limit_prints: int = kwargs.get("limit_prints", 0)
 
@@ -29,10 +30,9 @@ class GlobalFlags:
 SETTINGS = GlobalFlags()
 
 class Matrix:
-    __slots__ = ("_ptr", "_flags")
+    __slots__ = ("_ptr",)
         
-    def __init__(self, *rows: Union[int, float, list, tuple], **flags: Any) -> None:
-        self._flags = SETTINGS
+    def __init__(self, *rows: Union[int, float, list, tuple]) -> None:
         flat: list[float] = list(rows)
         if not len(rows): raise ValueError("Matrix cannot be empty.")
         if all(isinstance(i, (int, float)) for i in rows):
@@ -55,11 +55,11 @@ class Matrix:
         if not ptr: raise MemoryError("Null pointer from C backend.")
         obj = cls.__new__(cls)
         obj._ptr = ptr
-        obj._flags = SETTINGS
         return obj
 
     def __del__(self) -> None:
-        if hasattr(self, "_ptr") and self._ptr: CFunc.matrix_free(self._ptr)
+        if hasattr(self, "_ptr") and self._ptr:
+            CFunc.matrix_free(self._ptr)
     
     def __repr__(self) -> str:
         from hjort__repr__ import hjort__repr__
@@ -69,23 +69,66 @@ class Matrix:
     def __add__(self, other: Matrix) -> Matrix:
         if not isinstance(other, Matrix): raise NotImplementedError
         if self.m != other.m or self.n != other.n: raise ValueError("Dimensions mismatch.")
-        result_ptr = CFunc.matrix_create(self.m, self.n)
-        CFunc.matrix_add_inplace(self._ptr, other._ptr, result_ptr, int(self._flags.multithreaded))
+        result_ptr = CFunc.matrix_add(self._ptr, other._ptr, int(SETTINGS.multithreaded))
         return Matrix._init_C_native(result_ptr)
+    
+    def __iadd__(self, other: Matrix) -> Matrix:
+        if not isinstance(other, Matrix): raise NotImplementedError
+        if self.m != other.m or self.n != other.n: raise ValueError("Dimensions mismatch.")
+        CFunc.matrix_add_inplace(self._ptr, other._ptr, self._ptr, int(SETTINGS.multithreaded))
+        return self
     
     @lazy()
     def __sub__(self, other: Matrix) -> Matrix:
         if not isinstance(other, Matrix): raise NotImplementedError
         if self.m != other.m or self.n != other.n: raise ValueError("Dimensions mismatch.")
-        new_ptr = CFunc.matrix_sub(self._ptr, other._ptr, int(self._flags.multithreaded))
+        new_ptr = CFunc.matrix_sub(self._ptr, other._ptr, int(SETTINGS.multithreaded))
         return Matrix._init_C_native(new_ptr)
+    
+    def __isub__(self, other: Matrix) -> Matrix:
+        if not isinstance(other, Matrix): raise NotImplementedError
+        if self.m != other.m or self.n != other.n: raise ValueError("Dimensions mismatch.")
+        CFunc.matrix_sub_inplace(self._ptr, other._ptr, self._ptr, int(SETTINGS.multithreaded))
+        return self
 
     @lazy()
-    def __mul__(self, other: Matrix) -> Matrix:
-        if not isinstance(other, Matrix): raise NotImplementedError
-        if self.n != other.m: raise ValueError("Dimensions mismatch.")
-        new_ptr = CFunc.matrix_mul(self._ptr, other._ptr, int(self._flags.multithreaded))
+    def __mul__(self, other: Union[Matrix, int, float]) -> Matrix:
+        if isinstance(other, (int, float)):
+            new_ptr = CFunc.matrix_scalar_mul(self._ptr, float(other), int(SETTINGS.multithreaded))
+            return Matrix._init_C_native(new_ptr)
+        if not isinstance(other, Matrix):
+            raise NotImplementedError
+        if self.n != other.m:
+            raise ValueError("Dimensions mismatch.")
+        new_ptr = CFunc.matrix_mul(self._ptr, other._ptr, int(SETTINGS.multithreaded))
         return Matrix._init_C_native(new_ptr)
+
+    def __rmul__(self, other: Union[int, float]) -> Matrix:
+        if isinstance(other, (int, float)):
+            return self * other
+        return NotImplemented
+    
+    def __imul__(self, other: Matrix) -> Matrix:
+        if not isinstance(other, Matrix): raise NotImplementedError
+        if self.n != other.m:
+            raise ValueError("Dimensions mismatch.")
+        CFunc.matrix_mul_inplace(self._ptr, other._ptr, self._ptr, int(SETTINGS.multithreaded))
+        return self
+    
+    @lazy()
+    def __truediv__(self, other: Union[Matrix, int, float]) -> Matrix:
+        if isinstance(other, (int, float)):
+            return self * (1.0 / other)
+        if isinstance(other, Matrix):
+            result_ptr = CFunc.matrix_solve(self._ptr, other._ptr)
+        if isinstance(other, LazyMatrix):
+            other = other.evaluate()
+            result_ptr = CFunc.matrix_solve(self._ptr, other._ptr)
+        if not result_ptr:
+            raise ValueError("Singular matrix in inverse right multiplication")
+        return Matrix._init_C_native(result_ptr)
+
+
 
     @property
     def m(self) -> int: return CFunc.matrix_rows(self._ptr)
@@ -93,117 +136,124 @@ class Matrix:
     def n(self) -> int: return CFunc.matrix_cols(self._ptr)
 
     @classmethod
-    def random(cls, m: int, n: int, **flags: Any) -> Self:
-        ptr = CFunc.matrix_create(m, n)
-        CFunc.matrix_fill_random(ptr, 0.0, 1.0)
+    def random(cls, m: int, n: int) -> Self:
+        ptr = CFunc.matrix_random(m, n, 0.0, 1.0)
         return cls._init_C_native(ptr)
 
+    @alias("I")
     @classmethod
-    def identity(cls, n: int, **flags: Any) -> Self:
+    def identity(cls, n: int) -> Self:
         ptr = CFunc.matrix_identity(n)
         return cls._init_C_native(ptr)
     
+    @alias("inv")
     @property
     def inverse(self) -> Matrix:
-        ptr = CFunc.matrix_inverse(self._ptr, self._flags.multithreaded)
+        ptr = CFunc.matrix_inverse(self._ptr, SETTINGS.multithreaded)
         return self._init_C_native(ptr)
 
+    @alias("det")
     @property
     def determinant(self) -> float:
-        return CFunc.matrix_determinant(self._ptr, self._flags.multithreaded)
+        return CFunc.matrix_determinant(self._ptr, SETTINGS.multithreaded)
+
 
 class LazyMatrix(Matrix):
     class OpEnum(IntEnum):
         ADD = 0
         SUB = 1
-        MUL = 2
-        INV = 3
+        RML = 2
+        LML = 3
 
     def __init__(self, root: Matrix, ops: list = None) -> None:
         self.root = root
         self.ops = ops or []
-        self._flags = SETTINGS
         self._ptr = root._ptr
 
-    #NOTE Override the destructor as to not free up pointers before they are evaluated
     def __del__(self) -> None:
         pass
-    
+
     def __repr__(self) -> str:
-        ops_ptr = [(op, m._ptr) for op, m in self.ops]
-        return f"LazyMatrix(Root: {self.root._ptr}, Ops: {ops_ptr})"
-    
-    def __add__(self, other: Matrix) -> LazyMatrix:
-        self.ops.append((self.OpEnum.ADD, other))
-        return self
-    
-    def __sub__(self, other: Matrix) -> LazyMatrix:
-        self.ops.append((self.OpEnum.SUB, other))
-        return self
-    
-    def __mul__(self, other: Matrix) -> LazyMatrix:
-        self.ops.append((self.OpEnum.MUL, other))
-        return self
+        return repr(self.evaluate())
+
+    def __add__(self, other) -> LazyMatrix:
+        return LazyMatrix(self.root, self.ops + [(self.OpEnum.ADD, other)])
+
+    def __sub__(self, other) -> LazyMatrix:
+        return LazyMatrix(self.root, self.ops + [(self.OpEnum.SUB, other)])
+
+    def __mul__(self, other) -> LazyMatrix:
+        if isinstance(other, (int, float, Matrix)):
+            return LazyMatrix(self.root, self.ops + [(self.OpEnum.RML, other)])
+
+    def __rmul__(self, other) -> LazyMatrix:
+        if isinstance(other, (int, float, Matrix)):
+            return LazyMatrix(self.root, self.ops + [(self.OpEnum.LML, other)])
+
+    def __truediv__(self, other) -> LazyMatrix:
+        if isinstance(other, (int, float)): # NOTE Float scalar division
+            return LazyMatrix(self.root, self.ops + [(self.OpEnum.LML, 1.0/float(other))])
+        
+        if not isinstance(other, (Matrix, LazyMatrix)): # NOTE Inverse matrix right mul
+            pass
+
+    def __rtruediv__(self, other) -> LazyMatrix:
+        if isinstance(other, (int, float)):
+            return (~self) * other
+        return NotImplemented
+
+    def __itruediv__(self, other: Union[Matrix, int, float]) -> LazyMatrix:
+        return self / other
+
 
     @alias("compute")
     def evaluate(self) -> Matrix:
-        def check_dims():
-            m, n = self.root.m, self.root.n
-            cur_m, cur_n = m, n
-            for op, mat in self.ops:
-                if op in (self.OpEnum.ADD, self.OpEnum.SUB):
-                    if mat.m != cur_m or mat.n != cur_n:
-                        raise ValueError("Dimension mismatch.")
-                elif op == self.OpEnum.MUL:
-                    if cur_n != mat.m:
-                        raise ValueError("Dimension mismatch.")
-                    cur_n = mat.n
-                elif op == self.OpEnum.INV:
-                    if mat.m != mat.n:
-                        raise ValueError("Inverse requires square matrix.")
-
-        def simplify():
-            new_ops = []
-            for op, mat in self.ops:
-                if op == self.OpEnum.MUL and mat.m == mat.n:
-                    if getattr(mat, "is_identity", False):
-                        continue
-                if new_ops:
-                    prev_op, prev_mat = new_ops[-1]
-                    if prev_mat._ptr == mat._ptr:
-                        if prev_op == self.OpEnum.ADD and op == self.OpEnum.SUB:
-                            new_ops.pop()
+        simplified_ops = []
+        for op_type, operand in self.ops:
+            if isinstance(operand, LazyMatrix):
+                operand = operand.evaluate()
+            
+            if simplified_ops:
+                prev_type, prev_op = simplified_ops[-1]
+                if isinstance(operand, Matrix) and isinstance(prev_op, Matrix):
+                    if operand._ptr == prev_op._ptr:
+                        is_add_sub = (op_type == self.OpEnum.ADD and prev_type == self.OpEnum.SUB)
+                        is_sub_add = (op_type == self.OpEnum.SUB and prev_type == self.OpEnum.ADD)
+                        if is_add_sub or is_sub_add:
+                            simplified_ops.pop()
                             continue
-                        if prev_op == self.OpEnum.SUB and op == self.OpEnum.ADD:
-                            new_ops.pop()
-                            continue
-                new_ops.append((op, mat))
-            return new_ops
+            
+            simplified_ops.append((op_type, operand))
+        
+        res_ptr = CFunc.matrix_clone(self.root._ptr)
+        mt = int(SETTINGS.multithreaded)
 
-        def compile_ops(ops):
-            op_codes = []
-            ptrs = []
-            for op, mat in ops:
-                op_codes.append(int(op))
-                ptrs.append(mat._ptr)
-            return op_codes, ptrs
+        for op_type, op in simplified_ops:
+            if op_type == self.OpEnum.ADD:
+                CFunc.matrix_add_inplace(res_ptr, op._ptr, res_ptr, mt)
+            elif op_type == self.OpEnum.SUB:
+                CFunc.matrix_sub_inplace(res_ptr, op._ptr, res_ptr, mt)
+            elif op_type == self.OpEnum.RML:
+                if isinstance(op, (int, float)):
+                    CFunc.matrix_scalar_mul_inplace(res_ptr, float(op), res_ptr)
+                else:
+                    CFunc.matrix_mul_inplace(res_ptr, op._ptr, res_ptr, mt)
+            elif op_type == self.OpEnum.LML:
+                if isinstance(op, (int, float)):
+                    CFunc.matrix_scalar_mul_inplace(res_ptr, float(op), res_ptr)
+                else:
+                    new_ptr = CFunc.matrix_mul(op._ptr, res_ptr, mt)
+                    CFunc.matrix_free(res_ptr)
+                    res_ptr = new_ptr
 
-        check_dims()
-        ops = simplify()
-        op_codes, ptrs = compile_ops(ops)
+        return Matrix._init_C_native(res_ptr)
 
-        result_ptr = self.root._ptr
-        for op, ptr in zip(op_codes, ptrs):
-            if op == self.OpEnum.ADD:
-                new_ptr = CFunc.matrix_add(result_ptr, ptr, int(self._flags.multithreaded))
-            elif op == self.OpEnum.SUB:
-                new_ptr = CFunc.matrix_sub(result_ptr, ptr, int(self._flags.multithreaded))
-            elif op == self.OpEnum.MUL:
-                new_ptr = CFunc.matrix_mul(result_ptr, ptr, int(self._flags.multithreaded))
-            elif op == self.OpEnum.INV:
-                new_ptr = CFunc.matrix_inverse(result_ptr, int(self._flags.multithreaded))
-            else:
-                raise RuntimeError("Unknown operation.")
-            result_ptr = new_ptr
-
-        return Matrix._init_C_native(result_ptr)
+    @alias("inv")
+    @property
+    def inverse(self) -> Matrix:
+        return ~self
+    
+    @alias("det")
+    @property
+    def determinant(self) -> float:
+        return self.evaluate().determinant

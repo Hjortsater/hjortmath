@@ -33,19 +33,18 @@ class AliasProperty(property):
         for alias_name in self.alias_names:
             setattr(owner, alias_name, self)
 
-
 def lazy(threshold=256):
     def decorator(method):
         def wrapper(self, *args, **kwargs):
             from hjortMatrix import LazyMatrix, SETTINGS
-            Op = LazyMatrix.OpEnum
             
             val = getattr(SETTINGS, "lazy_eval", 0)
-            op_map = {"__add__": Op.ADD, "__sub__": Op.SUB, "__mul__": Op.MUL}
             
             if (val == 2) or (val == 1 and (self.m * self.n) <= threshold):
-                other = args[0]
-                return LazyMatrix(self, [(op_map[method.__name__], other)])
+                lazy_method = getattr(LazyMatrix, method.__name__, None)
+                if lazy_method and callable(lazy_method):
+                    lazy_self = LazyMatrix(self, [])
+                    return lazy_method(lazy_self, *args, **kwargs)
 
             return method(self, *args, **kwargs)
         return wrapper

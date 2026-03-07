@@ -1,11 +1,16 @@
 import shutil
-import math
+from math import floor, ceil
 from hjortMatrixHelper import CFunc
+from hjortMatrix import SETTINGS
 
 def round_to_sig_figs(x, n):
-    if x == 0:
-        return "0"
-    formatted = f"{x:.{n}g}"
+    if x == 0 and not SETTINGS.suppress_zeroes:
+        return "0." + "0" * (n - 1)
+    elif x == 0 and SETTINGS.suppress_zeroes:
+        return " "*(floor(n/2))+SETTINGS.suppress_zeroes[0]+" "*(ceil(n/2))
+    
+    formatted = f"{x:#.{n}g}"
+    
     return formatted.replace("e+0", "e").replace("e-0", "e-")
 
 def colorize(value: str, float_value: float, min_val: float, max_val: float, use_color: bool) -> str:
@@ -24,9 +29,9 @@ def hjort__repr__(self) -> str:
         return "[]"
 
     entries = CFunc.matrix_to_list(self._ptr)
-    digits = self._flags.sig_digits
-    use_color = self._flags.use_color
-    limit_prints = self._flags.limit_prints
+    digits = SETTINGS.sig_digits
+    use_color = SETTINGS.use_color
+    limit_prints = SETTINGS.limit_prints
     
     min_val = CFunc.matrix_get_min(self._ptr)
     max_val = CFunc.matrix_get_max(self._ptr)
@@ -41,26 +46,32 @@ def hjort__repr__(self) -> str:
                 max_str_len = s_len
     
     col_width = max_str_len + 1
+    
     max_cols_terminal = (term_width - 8) // col_width
     limit_cols = min(limit_prints, max_cols_terminal) if limit_prints else max_cols_terminal
 
     output = ""
     num_rows = len(entries)
+    num_cols = len(entries[0]) if entries else 0
     
     for a, row_data in enumerate(entries):
-        if limit_prints and a >= limit_prints - 1 and a != num_rows - 1:
-            if a >= limit_prints:
-                continue
-            
+        if limit_prints and a == limit_prints - 1 and a != num_rows - 1:
             dot_row = ""
-            visible_cols = row_data[:limit_cols] if limit_cols else row_data
-            for b in range(len(visible_cols)):
+
+            if limit_cols and num_cols > limit_cols:
+                visible_count = limit_cols + 1
+            else:
+                visible_count = num_cols
+            
+            for _ in range(visible_count):
                 dot_row += ".".center(max_str_len) + " "
-            output += f"⎢ {dot_row.rstrip()} ⎥\n"
+            output += f"⎢ {dot_row.rstrip()}{" ".center(int(max_str_len / 2))} ⎥\n"
+            continue
+        
+        if limit_prints and a >= limit_prints and a != num_rows - 1:
             continue
 
         row_content = ""
-        num_cols = len(row_data)
         for b, val in enumerate(row_data):
             if limit_cols and b >= limit_cols - 1 and b != num_cols - 1:
                 if b == limit_cols - 1:
@@ -80,6 +91,6 @@ def hjort__repr__(self) -> str:
         else:
             left, right = "⎢", "⎥"
 
-        output += f"{left} {row_content.rstrip()} {right}{"\n" if num_rows != 1 else ""}"
+        output += f"{left} {row_content.rstrip()} {right}{"\n" if a != num_rows - 1 else ""}"
 
     return output

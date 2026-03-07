@@ -31,3 +31,8 @@ setup(
     version="1.0",
     ext_modules=[module],
 )
+
+print("\n" + "="*50)
+print("BUILD COMPLETE - Module location:")
+print(os.path.abspath("hjortMatrixWrapper.cpython-312-x86_64-linux-gnu.so"))
+print("="*50 + "\n")
