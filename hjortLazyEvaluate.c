@@ -9,52 +9,30 @@
     and increase accuracy by performing algebraic simplifications.
 */
 
-Matrix* hjort_lazy_evaluate(Matrix* root, PyObject* ops_list, int multithreaded)
+
+Matrix* hjort_lazy_evaluate(Matrix* root, MatrixOp* ops, int num_ops, int multithreaded)
 {
-
-    /* clone root as starting point */
     Matrix* res = matrix_clone(root);
+    if (!res) return NULL;
 
-    if (!res)
-        return NULL;
-
-    Py_ssize_t num_ops = PyList_Size(ops_list);
-
-    for (Py_ssize_t i = 0; i < num_ops; i++) {
-
-        PyObject* item = PyList_GetItem(ops_list, i);
-
-        int op_type = (int)PyLong_AsLong(PyTuple_GetItem(item, 0));
-        PyObject* operand_capsule = PyTuple_GetItem(item, 1);
-
-        Matrix* operand =
-            PyCapsule_GetPointer(operand_capsule, "hjortMatrixWrapper.Matrix");
-
-        if (!operand)
-            return NULL;
-
-        switch (op_type)
-        {
-
-            case 0: /* ADD */
+    for (int i = 0; i < num_ops; i++) {
+        switch (ops[i].op_type) {
+            case 0:
+                if (!matrix_add_inplace(res, ops[i].operand, res, multithreaded)) goto error;
                 break;
-
-            case 1: /* SUB */
+            case 1:
+                if (!matrix_sub_inplace(res, ops[i].operand, res, multithreaded)) goto error;
                 break;
-
-            case 2: /* RML */
+            case 2:
+                if (!matrix_mul_inplace(res, ops[i].operand, res, multithreaded)) goto error;
                 break;
-
-            case 3: /* LML */
-                break;
-
-            case 4: /* DIV */
-                break;
-
             default:
-                return NULL;
+                goto error;
         }
     }
-
     return res;
+
+error:
+    matrix_free(res);
+    return NULL;
 }

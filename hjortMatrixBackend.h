@@ -16,6 +16,11 @@ typedef struct Matrix {
     double* data;
 } Matrix;
 
+typedef struct {
+    int op_type;
+    Matrix* operand;
+} MatrixOp;
+
 #define MAT(M, i, j) ((M)->data[(i) * (M)->n + (j)])
 
 // Core allocation/deallocation

@@ -4,6 +4,6 @@
 #include <Python.h>
 #include "hjortMatrixBackend.h"
 
-Matrix* hjort_lazy_evaluate(Matrix* root, PyObject* ops_list, int multithreaded);
+Matrix* hjort_lazy_evaluate(Matrix* root, MatrixOp* ops, int num_ops, int multithreaded);
 
 #endif
