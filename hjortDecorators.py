@@ -43,7 +43,7 @@ def lazy(threshold=256):
             if (val == 2) or (val == 1 and (self.m * self.n) <= threshold):
                 lazy_method = getattr(LazyMatrix, method.__name__, None)
                 if lazy_method and callable(lazy_method):
-                    lazy_self = LazyMatrix(self, [])
+                    lazy_self = LazyMatrix(self)
                     return lazy_method(lazy_self, *args, **kwargs)
 
             return method(self, *args, **kwargs)

@@ -175,9 +175,13 @@ class LazyMatrix(Matrix):
         LML = 3
         DIV = 4
 
-    def __init__(self, root: Matrix, ops: list = None) -> None:
+
+    __slots__ = ("root", "ops", "operands", "_ptr")
+
+    def __init__(self, root):
         self.root = root
-        self.ops = ops or []
+        self.ops = []
+        self.operands = []
         self._ptr = root._ptr
 
     def __del__(self) -> None:
@@ -190,14 +194,20 @@ class LazyMatrix(Matrix):
         return self.evaluate().__repr__()
 
     def __add__(self, other) -> LazyMatrix:
-        return LazyMatrix(self.root, self.ops + [(self.OpEnum.ADD, other)])
+        self.ops.append(self.OpEnum.ADD)
+        self.operands.append(other)
+        return self
+
 
     def __sub__(self, other) -> LazyMatrix:
-        return LazyMatrix(self.root, self.ops + [(self.OpEnum.SUB, other)])
+        self.ops.append(self.OpEnum.SUB)
+        self.operands.append(other)
+        return self
 
     def __mul__(self, other) -> LazyMatrix:
-        if isinstance(other, (int, float, Matrix)):
-            return LazyMatrix(self.root, self.ops + [(self.OpEnum.RML, other)])
+        self.ops.append(self.OpEnum.RML)
+        self.operands.append(other)
+        return self
 
     def __rmul__(self, other) -> LazyMatrix:
         if isinstance(other, (int, float, Matrix)):
@@ -225,7 +235,7 @@ class LazyMatrix(Matrix):
 
         ops_capsules = []
 
-        for op_type, operand in self.ops:
+        for op_type, operand in zip(self.ops, self.operands):
 
             if isinstance(operand, LazyMatrix):
                 operand = operand.evaluate()
