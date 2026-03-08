@@ -17,6 +17,7 @@ Written by Erik Hjortsäter February 27th 2026.
 
 class GlobalFlags:
     def __init__(self, **kwargs: Any) -> None:
+        self.simplify: bool = kwargs.get("simplify", True)
         self.lazy_eval: int = kwargs.get("lazy_eval", 1)
         self.sig_digits: int = kwargs.get("sig_digits", 3)
         self.use_color: bool = kwargs.get("use_color", True)
@@ -30,7 +31,7 @@ class GlobalFlags:
 SETTINGS = GlobalFlags()
 
 class Matrix:
-    __slots__ = ("_ptr",)
+    __slots__ = ("_ptr", "_version")
         
     def __init__(self, *rows: Union[int, float, list, tuple]) -> None:
         flat: list[float] = list(rows)
@@ -49,12 +50,14 @@ class Matrix:
         ptr = CFunc.matrix_create_from_buffer(buffer, m, n)
         if not ptr: raise MemoryError("C backend allocation failed")
         self._ptr = ptr
+        self._version = 0
 
     @classmethod
     def _init_C_native(cls, ptr: int) -> Self:
         if not ptr: raise MemoryError("Null pointer from C backend.")
         obj = cls.__new__(cls)
         obj._ptr = ptr
+        obj._version = 0
         return obj
 
     def __del__(self) -> None:
@@ -78,6 +81,7 @@ class Matrix:
     
     def __iadd__(self, other: Matrix) -> Matrix:
         if not isinstance(other, Matrix): raise NotImplementedError
+        self._version += 1
         if self.m != other.m or self.n != other.n: raise ValueError("Dimensions mismatch.")
         CFunc.matrix_add_inplace(self._ptr, other._ptr, self._ptr, int(SETTINGS.multithreaded))
         return self
@@ -91,6 +95,7 @@ class Matrix:
     
     def __isub__(self, other: Matrix) -> Matrix:
         if not isinstance(other, Matrix): raise NotImplementedError
+        self._version += 1
         if self.m != other.m or self.n != other.n: raise ValueError("Dimensions mismatch.")
         CFunc.matrix_sub_inplace(self._ptr, other._ptr, self._ptr, int(SETTINGS.multithreaded))
         return self
@@ -114,6 +119,7 @@ class Matrix:
     
     def __imul__(self, other: Matrix) -> Matrix:
         if not isinstance(other, Matrix): raise NotImplementedError
+        self._version += 1
         if self.n != other.m:
             raise ValueError("Dimensions mismatch.")
         CFunc.matrix_mul_inplace(self._ptr, other._ptr, self._ptr, int(SETTINGS.multithreaded))
@@ -176,12 +182,13 @@ class LazyMatrix(Matrix):
         DIV = 4
 
 
-    __slots__ = ("root", "ops", "operands", "_ptr")
+    __slots__ = ("root", "ops", "operands", "versions","_ptr")
 
     def __init__(self, root):
         self.root = root
         self.ops = []
         self.operands = []
+        self.versions = []
         self._ptr = root._ptr
 
     def __del__(self) -> None:
@@ -196,17 +203,20 @@ class LazyMatrix(Matrix):
     def __add__(self, other) -> LazyMatrix:
         self.ops.append(self.OpEnum.ADD)
         self.operands.append(other)
+        self.versions.append(other._version)
         return self
 
 
     def __sub__(self, other) -> LazyMatrix:
         self.ops.append(self.OpEnum.SUB)
         self.operands.append(other)
+        self.versions.append(other._version)
         return self
 
     def __mul__(self, other) -> LazyMatrix:
         self.ops.append(self.OpEnum.RML)
         self.operands.append(other)
+        self.versions.append(other._version)
         return self
 
     def __rmul__(self, other) -> LazyMatrix:
@@ -235,19 +245,19 @@ class LazyMatrix(Matrix):
 
         ops_capsules = []
 
-        for op_type, operand in zip(self.ops, self.operands):
+        for op_type, operand, ver in zip(self.ops, self.operands, self.versions):
 
             if isinstance(operand, LazyMatrix):
                 operand = operand.evaluate()
+                ver = getattr(operand, "_version", 0)
 
             if not isinstance(operand, Matrix):
                 raise TypeError("Minimal evaluator only supports Matrix operands")
 
-            ops_capsules.append((int(op_type), operand._ptr))
+            ops_capsules.append((int(op_type), operand._ptr, ver))
 
         mt = int(SETTINGS.multithreaded)
-
-        result_ptr = CFunc.matrix_evaluate_kernel(self.root._ptr, ops_capsules, mt)
+        result_ptr = CFunc.matrix_evaluate_kernel(self.root._ptr, ops_capsules, int(SETTINGS.multithreaded), int(SETTINGS.simplify))
 
         return Matrix._init_C_native(result_ptr)
 

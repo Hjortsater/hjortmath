@@ -10,16 +10,73 @@
 */
 
 inline Matrix* lazy_deligated_evaluation(Matrix* root, MatrixOp* ops, int num_ops, int multithreaded);
+inline MatrixOp* simplify_ops(MatrixOp* ops, int num_ops, int* out_count);
 
-
-Matrix* hjort_lazy_evaluate(Matrix* root, MatrixOp* ops, int num_ops, int multithreaded){
-    
-
-    return lazy_deligated_evaluation(root, ops, num_ops, multithreaded);
+Matrix* hjort_lazy_evaluate(Matrix* root, MatrixOp* ops, int num_ops, int multithreaded, int simplify_flag){
+    Matrix* result = NULL;
+    if (simplify_flag) {
+        int new_count;
+        MatrixOp* simplified_ops = simplify_ops(ops, num_ops, &new_count);
+        printf("Simplified operation queue (%d ops):\n", new_count);
+        for (int i = 0; i < new_count; i++) {
+            printf("  [%d] op_type=%d, operand=%p, version=%d\n",
+                   i,
+                   simplified_ops[i].op_type,
+                   simplified_ops[i].operand,
+                   simplified_ops[i].version);
+        }
+        result = lazy_deligated_evaluation(root, simplified_ops, new_count, multithreaded);
+        free(simplified_ops);
+    } else {
+        result = lazy_deligated_evaluation(root, ops, num_ops, multithreaded);
+    }
+    return result;
 }
 
 
+typedef struct {
+    int* ops;
+    void** operands;
+    int* versions;
+    int count;
+} SimplifiedOps;
 
+
+inline MatrixOp* simplify_ops(MatrixOp* ops, int num_ops, int* out_count) {
+    MatrixOp* new_ops = malloc(sizeof(MatrixOp) * num_ops);
+    int new_count = 0;
+
+    for (int i = 0; i < num_ops; i++) {
+        MatrixOp current = ops[i];
+        int found = 0;
+
+        for (int j = 0; j < new_count; j++) {
+            if (new_ops[j].operand == current.operand &&
+                new_ops[j].version == current.version) {
+                int delta = (current.op_type == 0 ? 1 : -1);
+                int existing_op = new_ops[j].op_type;
+                if (existing_op == 0) {
+                    delta += 1;
+                    if (delta == 0) {
+                        new_count--;
+                        new_ops[j] = new_ops[new_count];
+                    } else {
+                        new_ops[j].op_type = 0;
+                    }
+                }
+                found = 1;
+                break;
+            }
+        }
+
+        if (!found) {
+            new_ops[new_count++] = current;
+        }
+    }
+
+    *out_count = new_count;
+    return new_ops;
+}
 
 
 

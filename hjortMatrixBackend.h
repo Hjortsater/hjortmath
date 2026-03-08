@@ -9,17 +9,11 @@ extern "C" {
 #include <stddef.h>
 #include <omp.h>
 
-// Minimal Matrix struct
 typedef struct Matrix {
     int m;
     int n;
     double* data;
 } Matrix;
-
-typedef struct {
-    int op_type;
-    Matrix* operand;
-} MatrixOp;
 
 #define MAT(M, i, j) ((M)->data[(i) * (M)->n + (j)])
 
