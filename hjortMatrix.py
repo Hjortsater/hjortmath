@@ -17,6 +17,7 @@ Written by Erik Hjortsäter February 27th 2026.
 
 class GlobalFlags:
     def __init__(self, **kwargs: Any) -> None:
+        self.mutable_eagers: bool = kwargs.get("mutable_eagers", False)
         self.simplify: bool = kwargs.get("simplify", True)
         self.lazy_eval: int = kwargs.get("lazy_eval", 1)
         self.sig_digits: int = kwargs.get("sig_digits", 3)
@@ -80,6 +81,8 @@ class Matrix:
         return Matrix._init_C_native(result_ptr)
     
     def __iadd__(self, other: Matrix) -> Matrix:
+        if not SETTINGS.mutable_eagers:
+            return self.__add__(other)
         if not isinstance(other, Matrix): raise NotImplementedError
         self._version += 1
         if self.m != other.m or self.n != other.n: raise ValueError("Dimensions mismatch.")
@@ -94,6 +97,8 @@ class Matrix:
         return Matrix._init_C_native(new_ptr)
     
     def __isub__(self, other: Matrix) -> Matrix:
+        if not SETTINGS.mutable_eagers:
+            return self.__sub__(other)
         if not isinstance(other, Matrix): raise NotImplementedError
         self._version += 1
         if self.m != other.m or self.n != other.n: raise ValueError("Dimensions mismatch.")
@@ -118,6 +123,8 @@ class Matrix:
         return NotImplemented
     
     def __imul__(self, other: Matrix) -> Matrix:
+        if not SETTINGS.mutable_eagers:
+            return self.__mul__(other)
         if not isinstance(other, (int, float)):
             return self.__mul__(other)
         self._version += 1
