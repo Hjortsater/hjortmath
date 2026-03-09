@@ -6,7 +6,7 @@
 
 typedef struct {
     int op_type;
-    Matrix* operand;
+    void* operand;
     int version;
 } MatrixOp;
 

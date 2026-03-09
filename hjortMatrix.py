@@ -118,11 +118,10 @@ class Matrix:
         return NotImplemented
     
     def __imul__(self, other: Matrix) -> Matrix:
-        if not isinstance(other, Matrix): raise NotImplementedError
+        if not isinstance(other, (int, float)):
+            return self.__mul__(other)
         self._version += 1
-        if self.n != other.m:
-            raise ValueError("Dimensions mismatch.")
-        CFunc.matrix_mul_inplace(self._ptr, other._ptr, self._ptr, int(SETTINGS.multithreaded))
+        CFunc.matrix_scalar_mul_inplace(self._ptr, float(other), self._ptr, int(SETTINGS.multithreaded))
         return self
     
     @lazy()
@@ -179,8 +178,8 @@ class LazyMatrix(Matrix):
         SUB = 1
         RML = 2
         LML = 3
-        DIV = 4
-
+        SML = 4
+        DIV = 5
 
     __slots__ = ("root", "ops", "operands", "versions","_ptr")
 
@@ -214,14 +213,26 @@ class LazyMatrix(Matrix):
         return self
 
     def __mul__(self, other) -> LazyMatrix:
+        if isinstance(other, (int, float)):
+            self.ops.append(self.OpEnum.SML)
+            self.operands.append(other)
+            self.versions.append(0)
+            return self
         self.ops.append(self.OpEnum.RML)
         self.operands.append(other)
         self.versions.append(other._version)
         return self
 
     def __rmul__(self, other) -> LazyMatrix:
-        if isinstance(other, (int, float, Matrix)):
-            return LazyMatrix(self.root, self.ops + [(self.OpEnum.LML, other)])
+        if isinstance(other, (int, float)):
+            self.ops.append(self.OpEnum.SML)
+            self.operands.append(other)
+            self.versions.append(0)
+            return self
+        self.ops.append(self.OpEnum.LML)
+        self.operands.append(other)
+        self.versions.append(other._version)
+        return self
 
     def __truediv__(self, other) -> LazyMatrix:
         if isinstance(other, (int, float)): # NOTE Float scalar division
@@ -244,19 +255,16 @@ class LazyMatrix(Matrix):
     def evaluate(self) -> Matrix:
 
         ops_capsules = []
-
         for op_type, operand, ver in zip(self.ops, self.operands, self.versions):
-
             if isinstance(operand, LazyMatrix):
                 operand = operand.evaluate()
                 ver = getattr(operand, "_version", 0)
 
-            if not isinstance(operand, Matrix):
-                raise TypeError("Minimal evaluator only supports Matrix operands")
+            if op_type == self.OpEnum.SML:
+                ops_capsules.append((int(op_type), float(operand), ver))
+            else:
+                ops_capsules.append((int(op_type), operand._ptr, ver))
 
-            ops_capsules.append((int(op_type), operand._ptr, ver))
-
-        mt = int(SETTINGS.multithreaded)
         result_ptr = CFunc.matrix_evaluate_kernel(self.root._ptr, ops_capsules, int(SETTINGS.multithreaded), int(SETTINGS.simplify))
 
         return Matrix._init_C_native(result_ptr)
