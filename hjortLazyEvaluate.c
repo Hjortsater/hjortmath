@@ -1,22 +1,21 @@
 #include <Python.h>
 #include <stdlib.h>
-
+#include <stdio.h>
 #include "hjortLazyEvaluate.h"
 
-
-/*
-    Lazy evaluate function queues operations in the backend to minimise malloc calls
-    and increase accuracy by performing algebraic simplifications.
-*/
-
 inline Matrix* lazy_deligated_evaluation(Matrix* root, MatrixOp* ops, int num_ops, int multithreaded);
-inline MatrixOp* simplify_ops(MatrixOp* ops, int num_ops, int* out_count);
+inline MatrixOp* simplify_ops(Matrix* root, MatrixOp* ops, int num_ops, int* out_count);
+void debug_print_ops(const char* label, MatrixOp* ops, int count);
 
 Matrix* hjort_lazy_evaluate(Matrix* root, MatrixOp* ops, int num_ops, int multithreaded, int simplify_flag){
     Matrix* result = NULL;
     if (simplify_flag) {
+        debug_print_ops("BEFORE SIMPLIFY", ops, num_ops);
+        
         int new_count;
-        MatrixOp* simplified_ops = simplify_ops(ops, num_ops, &new_count);
+        MatrixOp* simplified_ops = simplify_ops(root, ops, num_ops, &new_count);
+        
+        debug_print_ops("AFTER SIMPLIFY", simplified_ops, new_count);
 
         result = lazy_deligated_evaluation(root, simplified_ops, new_count, multithreaded);
         free(simplified_ops);
@@ -26,74 +25,130 @@ Matrix* hjort_lazy_evaluate(Matrix* root, MatrixOp* ops, int num_ops, int multit
     return result;
 }
 
+inline MatrixOp* simplify_ops(Matrix* root, MatrixOp* ops, int num_ops, int* out_count) {
+    typedef struct {
+        Matrix* mat;
+        int version;
+        double coeff;
+    } LinearTerm;
 
+    LinearTerm terms[256];
+    int term_count = 0;
+    double root_coeff = 1.0;
 
-inline MatrixOp* simplify_ops(MatrixOp* ops, int num_ops, int* out_count) {
-    // Print all operations
-    printf("=== simplify_ops received %d operations ===\n", num_ops);
+    MatrixOp* out = malloc(sizeof(MatrixOp) * (num_ops * 64));
+    int out_i = 0;
+
     for (int i = 0; i < num_ops; i++) {
-        printf("  %d: type=%d, operand=%p, version=%d\n", 
-               i, ops[i].op_type, ops[i].operand, ops[i].version);
-    }
+        int type = ops[i].op_type;
 
-
-
-
-    // Just return a copy of the original ops (no simplification)
-    MatrixOp* new_ops = malloc(sizeof(MatrixOp) * num_ops);
-    for (int i = 0; i < num_ops; i++) {
-        if (ops[i].op_type == 4) {
-            // Need to copy scalar for SML ops
-            double* scalar_copy = malloc(sizeof(double));
-            *scalar_copy = *(double*)ops[i].operand;
-            new_ops[i].op_type = 4;
-            new_ops[i].operand = scalar_copy;
-            new_ops[i].version = ops[i].version;
+        if (type == 0 || type == 1 || type == 4) {
+            if (type == 0 || type == 1) {
+                double sign = (type == 0) ? 1.0 : -1.0;
+                if (ops[i].operand.mat == root) {
+                    root_coeff += sign;
+                } else {
+                    int found = 0;
+                    for (int j = 0; j < term_count; j++) {
+                        if (terms[j].mat == ops[i].operand.mat && terms[j].version == ops[i].version) {
+                            terms[j].coeff += sign;
+                            found = 1;
+                            break;
+                        }
+                    }
+                    if (!found) {
+                        terms[term_count].mat = ops[i].operand.mat;
+                        terms[term_count].version = ops[i].version;
+                        terms[term_count].coeff = sign;
+                        term_count++;
+                    }
+                }
+            } else if (type == 4) {
+                double factor = ops[i].operand.scalar;
+                root_coeff *= factor;
+                for (int j = 0; j < term_count; j++) {
+                    terms[j].coeff *= factor;
+                }
+            }
         } else {
-            // Just copy the operation as-is
-            new_ops[i] = ops[i];
+            if (root_coeff != 1.0) {
+                out[out_i].op_type = 4;
+                out[out_i].operand.scalar = root_coeff;
+                out[out_i].version = 0;
+                out_i++;
+            }
+            for (int j = 0; j < term_count; j++) {
+                int c = (int)terms[j].coeff;
+                if (c == 0) continue;
+                for (int k = 0; k < abs(c); k++) {
+                    out[out_i].op_type = (c > 0) ? 0 : 1;
+                    out[out_i].operand.mat = terms[j].mat;
+                    out[out_i].version = terms[j].version;
+                    out_i++;
+                }
+            }
+            
+            out[out_i++] = ops[i];
+            
+            root_coeff = 1.0;
+            term_count = 0;
         }
     }
-    
-    *out_count = num_ops;
-    return new_ops;
+
+    if (root_coeff != 1.0) {
+        out[out_i].op_type = 4;
+        out[out_i].operand.scalar = root_coeff;
+        out[out_i].version = 0;
+        out_i++;
+    }
+    for (int j = 0; j < term_count; j++) {
+        int c = (int)terms[j].coeff;
+        if (c == 0) continue;
+        for (int k = 0; k < abs(c); k++) {
+            out[out_i].op_type = (c > 0) ? 0 : 1;
+            out[out_i].operand.mat = terms[j].mat;
+            out[out_i].version = terms[j].version;
+            out_i++;
+        }
+    }
+
+    *out_count = out_i;
+    return out;
 }
 
 
-
 inline Matrix* lazy_deligated_evaluation(Matrix* root, MatrixOp* ops, int num_ops, int multithreaded){
-
     Matrix* res = matrix_clone(root);
     if (!res) return NULL;
 
     for (int i = 0; i < num_ops; i++) {
         switch (ops[i].op_type) {
-            case 0: // ADD
-                if (!matrix_add_inplace(res, ops[i].operand, res, multithreaded)) goto error;
+            case 0:
+                if (!matrix_add_inplace(res, ops[i].operand.mat, res, multithreaded)) goto error;
                 break;
-            case 1: // SUB
-                if (!matrix_sub_inplace(res, ops[i].operand, res, multithreaded)) goto error;
+            case 1:
+                if (!matrix_sub_inplace(res, ops[i].operand.mat, res, multithreaded)) goto error;
                 break;
-            case 2: // RML
+            case 2:
             {
-                Matrix* next_res = matrix_mul(res, ops[i].operand, multithreaded);
+                Matrix* next_res = matrix_mul(res, ops[i].operand.mat, multithreaded);
                 if (!next_res) goto error;
                 matrix_free(res);
                 res = next_res;
                 break;
             }
-            case 3: // LML
+            case 3:
             {
-                Matrix* next_res = matrix_mul(ops[i].operand, res, multithreaded);
+                Matrix* next_res = matrix_mul(ops[i].operand.mat, res, multithreaded);
                 if (!next_res) goto error;
                 matrix_free(res);
                 res = next_res;
                 break;
             }
-            case 4: // SML (scalar multiplication)
+            case 4:
             {
-                double scalar = *(double*)ops[i].operand;  // make sure Python sends a pointer to double
-                if (!matrix_scalar_mul_inplace(res, res, scalar, multithreaded)) goto error;
+                double val = ops[i].operand.scalar;
+                if (!matrix_scalar_mul_inplace(res, res, val, multithreaded)) goto error;
                 break;
             }
             default:
@@ -105,4 +160,18 @@ inline Matrix* lazy_deligated_evaluation(Matrix* root, MatrixOp* ops, int num_op
 error:
     matrix_free(res);
     return NULL;
+}
+
+
+void debug_print_ops(const char* label, MatrixOp* ops, int count) {
+    printf("--- %s (%d ops) ---\n", label, count);
+    for (int i = 0; i < count; i++) {
+        printf("[%d] Type: %d | ", i, ops[i].op_type);
+        if (ops[i].op_type == 4) {
+            printf("Value: %f\n", ops[i].operand.scalar);
+        } else {
+            printf("Ptr: %p | Ver: %d\n", (void*)ops[i].operand.mat, ops[i].version);
+        }
+    }
+    printf("--------------------------\n");
 }

@@ -181,7 +181,7 @@ class LazyMatrix(Matrix):
         SML = 4
         DIV = 5
 
-    __slots__ = ("root", "ops", "operands", "versions","_ptr")
+    __slots__ = ("root", "ops", "operands", "versions","_ptr", "_version")
 
     def __init__(self, root):
         self.root = root
@@ -189,6 +189,7 @@ class LazyMatrix(Matrix):
         self.operands = []
         self.versions = []
         self._ptr = root._ptr
+        self._version = root._version
 
     def __del__(self) -> None:
         pass
@@ -200,17 +201,34 @@ class LazyMatrix(Matrix):
         return self.evaluate().__repr__()
 
     def __add__(self, other) -> LazyMatrix:
-        self.ops.append(self.OpEnum.ADD)
-        self.operands.append(other)
-        self.versions.append(other._version)
-        return self
+        if isinstance(other, Matrix):
+            self.ops.append(self.OpEnum.ADD)
+            self.operands.append(other)
+            self.versions.append(other._version)
+            return self
 
+        if isinstance(other, LazyMatrix):
+            self.ops.append(self.OpEnum.ADD)
+            self.operands.append(other)
+            self.versions.append(0)
+            return self
+
+        raise NotImplementedError(f"Addition not supported for type {type(other)}")
 
     def __sub__(self, other) -> LazyMatrix:
-        self.ops.append(self.OpEnum.SUB)
-        self.operands.append(other)
-        self.versions.append(other._version)
-        return self
+        if isinstance(other, Matrix):
+            self.ops.append(self.OpEnum.SUB)
+            self.operands.append(other)
+            self.versions.append(other._version)
+            return self
+
+        if isinstance(other, LazyMatrix):
+            self.ops.append(self.OpEnum.SUB)
+            self.operands.append(other)
+            self.versions.append(0)
+            return self
+
+        raise NotImplementedError(f"Addition not supported for type {type(other)}")
 
     def __mul__(self, other) -> LazyMatrix:
         if isinstance(other, (int, float)):
@@ -218,10 +236,17 @@ class LazyMatrix(Matrix):
             self.operands.append(other)
             self.versions.append(0)
             return self
-        self.ops.append(self.OpEnum.RML)
-        self.operands.append(other)
-        self.versions.append(other._version)
-        return self
+        if isinstance(other, Matrix):
+            self.ops.append(self.OpEnum.RML)
+            self.operands.append(other)
+            self.versions.append(other._version)
+            return self
+        if isinstance(other, LazyMatrix):
+            self.ops.append(self.OpEnum.RML)
+            self.operands.append(other)
+            self.versions.append(0)
+            return self
+        raise NotImplementedError(f"Multiplication not supported for type {type(other)}")
 
     def __rmul__(self, other) -> LazyMatrix:
         if isinstance(other, (int, float)):
@@ -229,10 +254,18 @@ class LazyMatrix(Matrix):
             self.operands.append(other)
             self.versions.append(0)
             return self
-        self.ops.append(self.OpEnum.LML)
-        self.operands.append(other)
-        self.versions.append(other._version)
-        return self
+        if isinstance(other, Matrix):
+            self.ops.append(self.OpEnum.LML)
+            self.operands.append(other)
+            self.versions.append(other._version)
+            return self
+        if isinstance(other, LazyMatrix):
+            self.ops.append(self.OpEnum.LML)
+            self.operands.append(other)
+            self.versions.append(0)
+            return self
+        raise NotImplementedError(f"Right multiplication not supported for type {type(other)}")
+
 
     def __truediv__(self, other) -> LazyMatrix:
         if isinstance(other, (int, float)): # NOTE Float scalar division
