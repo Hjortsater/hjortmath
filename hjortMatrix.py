@@ -62,8 +62,7 @@ class Matrix:
         return obj
 
     def __del__(self) -> None:
-        if hasattr(self, "_ptr") and self._ptr:
-            CFunc.matrix_free(self._ptr)
+        return
     
     def __str__(self) -> str:
         from hjort_str_ import hjort_str_
@@ -178,6 +177,7 @@ class Matrix:
     def evaluate(self) -> Self:
         print("Attempted to evaluate object of type Matrix")
         print("Perhaps the LazyMatrix intended was already evaluated, or the lazy_eval flag is set to dynamic (1)?")
+        return self
 
 class LazyMatrix(Matrix):
     class OpEnum(IntEnum):
@@ -190,11 +190,11 @@ class LazyMatrix(Matrix):
 
     __slots__ = ("root", "ops", "operands", "versions","_ptr", "_version")
 
-    def __init__(self, root):
+    def __init__(self, root, ops=None, operands=None, versions=None):
         self.root = root
-        self.ops = []
-        self.operands = []
-        self.versions = []
+        self.ops = ops if ops is not None else []
+        self.operands = operands if operands is not None else []
+        self.versions = versions if versions is not None else []
         self._ptr = root._ptr
         self._version = root._version
 
@@ -207,71 +207,84 @@ class LazyMatrix(Matrix):
     def __repr__(self) -> str:
         return self.evaluate().__repr__()
 
-    def __add__(self, other) -> LazyMatrix:
-        if isinstance(other, Matrix):
-            self.ops.append(self.OpEnum.ADD)
-            self.operands.append(other)
-            self.versions.append(other._version)
-            return self
+    def __add__(self, other: Union[Matrix, LazyMatrix]) -> LazyMatrix:
+        if not isinstance(other, (Matrix, LazyMatrix)):
+            return NotImplemented
 
+        new_ops = self.ops + [self.OpEnum.ADD]
+        new_operands = self.operands + [other]
+        
         if isinstance(other, LazyMatrix):
-            self.ops.append(self.OpEnum.ADD)
-            self.operands.append(other)
-            self.versions.append(0)
-            return self
+            new_versions = self.versions + [0]
+        else:
+            new_versions = self.versions + [other._version]
 
-        raise NotImplementedError(f"Addition not supported for type {type(other)}")
+        return LazyMatrix(
+            root=self.root,
+            ops=new_ops,
+            operands=new_operands,
+            versions=new_versions
+        )
 
-    def __sub__(self, other) -> LazyMatrix:
-        if isinstance(other, Matrix):
-            self.ops.append(self.OpEnum.SUB)
-            self.operands.append(other)
-            self.versions.append(other._version)
-            return self
 
-        if isinstance(other, LazyMatrix):
-            self.ops.append(self.OpEnum.SUB)
-            self.operands.append(other)
-            self.versions.append(0)
-            return self
+    def __sub__(self, other: Union[Matrix, LazyMatrix]) -> LazyMatrix:
+            if not isinstance(other, (Matrix, LazyMatrix)):
+                return NotImplemented
 
-        raise NotImplementedError(f"Addition not supported for type {type(other)}")
+            new_ops = self.ops + [self.OpEnum.SUB]
+            new_operands = self.operands + [other]
+            
+            if isinstance(other, LazyMatrix):
+                new_versions = self.versions + [0]
+            else:
+                new_versions = self.versions + [other._version]
 
-    def __mul__(self, other) -> LazyMatrix:
+            return LazyMatrix(
+                root=self.root,
+                ops=new_ops,
+                operands=new_operands,
+                versions=new_versions
+            )
+
+
+    def __mul__(self, other: Union[Matrix, LazyMatrix, int, float]) -> LazyMatrix:
         if isinstance(other, (int, float)):
-            self.ops.append(self.OpEnum.SML)
-            self.operands.append(other)
-            self.versions.append(0)
-            return self
-        if isinstance(other, Matrix):
-            self.ops.append(self.OpEnum.RML)
-            self.operands.append(other)
-            self.versions.append(other._version)
-            return self
-        if isinstance(other, LazyMatrix):
-            self.ops.append(self.OpEnum.RML)
-            self.operands.append(other)
-            self.versions.append(0)
-            return self
-        raise NotImplementedError(f"Multiplication not supported for type {type(other)}")
+            new_ops = self.ops + [self.OpEnum.SML]
+            new_operands = self.operands + [float(other)]
+            new_versions = self.versions + [0]
+        elif isinstance(other, (Matrix, LazyMatrix)):
+            new_ops = self.ops + [self.OpEnum.RML]
+            new_operands = self.operands + [other]
+            new_versions = self.versions + [getattr(other, "_version", 0)]
+        else:
+            return NotImplemented
 
-    def __rmul__(self, other) -> LazyMatrix:
+        return LazyMatrix(
+            root=self.root,
+            ops=new_ops,
+            operands=new_operands,
+            versions=new_versions
+        )
+
+
+    def __rmul__(self, other: Union[Matrix, LazyMatrix, int, float]) -> LazyMatrix:
         if isinstance(other, (int, float)):
-            self.ops.append(self.OpEnum.SML)
-            self.operands.append(other)
-            self.versions.append(0)
-            return self
-        if isinstance(other, Matrix):
-            self.ops.append(self.OpEnum.LML)
-            self.operands.append(other)
-            self.versions.append(other._version)
-            return self
-        if isinstance(other, LazyMatrix):
-            self.ops.append(self.OpEnum.LML)
-            self.operands.append(other)
-            self.versions.append(0)
-            return self
-        raise NotImplementedError(f"Right multiplication not supported for type {type(other)}")
+            new_ops = self.ops + [self.OpEnum.SML]
+            new_operands = self.operands + [float(other)]
+            new_versions = self.versions + [0]
+        elif isinstance(other, (Matrix, LazyMatrix)):
+            new_ops = self.ops + [self.OpEnum.LML]
+            new_operands = self.operands + [other]
+            new_versions = self.versions + [getattr(other, "_version", 0)]
+        else:
+            return NotImplemented
+
+        return LazyMatrix(
+            root=self.root,
+            ops=new_ops,
+            operands=new_operands,
+            versions=new_versions
+        )
 
 
     def __truediv__(self, other) -> LazyMatrix:
@@ -296,6 +309,7 @@ class LazyMatrix(Matrix):
 
         ops_capsules = []
         for op_type, operand, ver in zip(self.ops, self.operands, self.versions):
+
             if isinstance(operand, LazyMatrix):
                 operand = operand.evaluate()
                 ver = getattr(operand, "_version", 0)

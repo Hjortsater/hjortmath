@@ -4,24 +4,33 @@
 #include "hjortLazyEvaluate.h"
 
 inline Matrix* lazy_deligated_evaluation(Matrix* root, MatrixOp* ops, int num_ops, int multithreaded);
+inline Matrix* lazy_fused_evaluation(Matrix* root, MatrixOp* ops, int num_ops, int multithreaded);
 inline MatrixOp* simplify_ops(Matrix* root, MatrixOp* ops, int num_ops, int* out_count);
-void debug_print_ops(const char* label, MatrixOp* ops, int count);
 
-Matrix* hjort_lazy_evaluate(Matrix* root, MatrixOp* ops, int num_ops, int multithreaded, int simplify_flag){
+Matrix* hjort_lazy_evaluate(Matrix* root, MatrixOp* ops, int num_ops, int multithreaded, int simplify_flag) {
+    if (!root || !ops) return NULL;
+
     Matrix* result = NULL;
-    if (simplify_flag) {
-        debug_print_ops("BEFORE SIMPLIFY", ops, num_ops);
-        
-        int new_count;
-        MatrixOp* simplified_ops = simplify_ops(root, ops, num_ops, &new_count);
-        
-        debug_print_ops("AFTER SIMPLIFY", simplified_ops, new_count);
+    MatrixOp* active_ops = ops;
+    int active_count = num_ops;
 
-        result = lazy_deligated_evaluation(root, simplified_ops, new_count, multithreaded);
-        free(simplified_ops);
-    } else {
-        result = lazy_deligated_evaluation(root, ops, num_ops, multithreaded);
+    if (simplify_flag) {
+        int new_count = 0;
+        active_ops = simplify_ops(root, ops, num_ops, &new_count);
+        if (!active_ops) return NULL;
+        active_count = new_count;
     }
+
+    result = lazy_fused_evaluation(root, active_ops, active_count, multithreaded);
+
+    if (!result) {
+        result = lazy_deligated_evaluation(root, active_ops, active_count, multithreaded);
+    }
+
+    if (simplify_flag && active_ops != ops) {
+        free(active_ops);
+    }
+
     return result;
 }
 
@@ -32,11 +41,19 @@ inline MatrixOp* simplify_ops(Matrix* root, MatrixOp* ops, int num_ops, int* out
         double coeff;
     } LinearTerm;
 
-    LinearTerm terms[256];
+    int term_capacity = 1024;
+    LinearTerm* terms = malloc(sizeof(LinearTerm) * term_capacity);
+    if (!terms) return NULL;
+
     int term_count = 0;
     double root_coeff = 1.0;
 
-    MatrixOp* out = malloc(sizeof(MatrixOp) * (num_ops * 64));
+    int out_capacity = num_ops > 128 ? num_ops * 2 : 256;
+    MatrixOp* out = malloc(sizeof(MatrixOp) * out_capacity);
+    if (!out) {
+        free(terms);
+        return NULL;
+    }
     int out_i = 0;
 
     for (int i = 0; i < num_ops; i++) {
@@ -57,6 +74,16 @@ inline MatrixOp* simplify_ops(Matrix* root, MatrixOp* ops, int num_ops, int* out
                         }
                     }
                     if (!found) {
+                        if (term_count >= term_capacity) {
+                            term_capacity *= 2;
+                            LinearTerm* new_terms = realloc(terms, sizeof(LinearTerm) * term_capacity);
+                            if (!new_terms) {
+                                free(terms);
+                                free(out);
+                                return NULL;
+                            }
+                            terms = new_terms;
+                        }
                         terms[term_count].mat = ops[i].operand.mat;
                         terms[term_count].version = ops[i].version;
                         terms[term_count].coeff = sign;
@@ -71,90 +98,97 @@ inline MatrixOp* simplify_ops(Matrix* root, MatrixOp* ops, int num_ops, int* out
                 }
             }
         } else {
+            if (out_i + term_count * 2 + 5 >= out_capacity) {
+                out_capacity = out_capacity * 2 + term_count * 2;
+                MatrixOp* new_out = realloc(out, sizeof(MatrixOp) * out_capacity);
+                if (!new_out) {
+                    free(terms);
+                    free(out);
+                    return NULL;
+                }
+                out = new_out;
+            }
+
             if (root_coeff != 1.0) {
                 out[out_i].op_type = 4;
                 out[out_i].operand.scalar = root_coeff;
-                out[out_i].version = 0;
-                out_i++;
+                out[out_i++].version = 0;
             }
             for (int j = 0; j < term_count; j++) {
-                int c = (int)terms[j].coeff;
-                if (c == 0) continue;
-                for (int k = 0; k < abs(c); k++) {
-                    out[out_i].op_type = (c > 0) ? 0 : 1;
-                    out[out_i].operand.mat = terms[j].mat;
-                    out[out_i].version = terms[j].version;
-                    out_i++;
-                }
+                if (terms[j].coeff == 0.0) continue;
+                out[out_i].op_type = 4;
+                out[out_i].operand.scalar = terms[j].coeff;
+                out[out_i++].version = 0;
+                out[out_i].op_type = 0;
+                out[out_i].operand.mat = terms[j].mat;
+                out[out_i++].version = terms[j].version;
             }
-            
+
             out[out_i++] = ops[i];
-            
             root_coeff = 1.0;
             term_count = 0;
         }
     }
 
+    if (out_i + term_count * 2 + 2 >= out_capacity) {
+        out_capacity += (term_count * 2 + 2);
+        MatrixOp* new_out = realloc(out, sizeof(MatrixOp) * out_capacity);
+        if (!new_out) {
+            free(terms);
+            free(out);
+            return NULL;
+        }
+        out = new_out;
+    }
+
     if (root_coeff != 1.0) {
         out[out_i].op_type = 4;
         out[out_i].operand.scalar = root_coeff;
-        out[out_i].version = 0;
-        out_i++;
+        out[out_i++].version = 0;
     }
     for (int j = 0; j < term_count; j++) {
-        int c = (int)terms[j].coeff;
-        if (c == 0) continue;
-        for (int k = 0; k < abs(c); k++) {
-            out[out_i].op_type = (c > 0) ? 0 : 1;
-            out[out_i].operand.mat = terms[j].mat;
-            out[out_i].version = terms[j].version;
-            out_i++;
-        }
+        if (terms[j].coeff == 0.0) continue;
+        out[out_i].op_type = 4;
+        out[out_i].operand.scalar = terms[j].coeff;
+        out[out_i++].version = 0;
+        out[out_i].op_type = 0;
+        out[out_i].operand.mat = terms[j].mat;
+        out[out_i++].version = terms[j].version;
     }
 
+    free(terms);
     *out_count = out_i;
     return out;
 }
 
+inline Matrix* lazy_fused_evaluation(Matrix* root, MatrixOp* ops, int num_ops, int multithreaded) {
+    for (int i = 0; i < num_ops; i++) {
+        if (ops[i].op_type == 2 || ops[i].op_type == 3) return NULL;
+    }
 
-inline Matrix* lazy_deligated_evaluation(Matrix* root, MatrixOp* ops, int num_ops, int multithreaded){
     Matrix* res = matrix_clone(root);
     if (!res) return NULL;
 
+    double current_scalar = 1.0;
+
     for (int i = 0; i < num_ops; i++) {
-        switch (ops[i].op_type) {
-            case 0:
-                if (!matrix_add_inplace(res, ops[i].operand.mat, res, multithreaded)) goto error;
-                break;
-            case 1:
-                if (!matrix_sub_inplace(res, ops[i].operand.mat, res, multithreaded)) goto error;
-                break;
-            case 2:
-            {
-                Matrix* next_res = matrix_mul(res, ops[i].operand.mat, multithreaded);
-                if (!next_res) goto error;
-                matrix_free(res);
-                res = next_res;
-                break;
+        int type = ops[i].op_type;
+        if (type == 0 || type == 1) {
+            if (current_scalar != 1.0) {
+                Matrix* tmp = matrix_scalar_mul(ops[i].operand.mat, current_scalar, multithreaded);
+                if (!tmp) goto error;
+                if (type == 0) matrix_add_inplace(res, tmp, res, multithreaded);
+                else matrix_sub_inplace(res, tmp, res, multithreaded);
+                matrix_free(tmp);
+            } else {
+                if (type == 0) matrix_add_inplace(res, ops[i].operand.mat, res, multithreaded);
+                else matrix_sub_inplace(res, ops[i].operand.mat, res, multithreaded);
             }
-            case 3:
-            {
-                Matrix* next_res = matrix_mul(ops[i].operand.mat, res, multithreaded);
-                if (!next_res) goto error;
-                matrix_free(res);
-                res = next_res;
-                break;
-            }
-            case 4:
-            {
-                double val = ops[i].operand.scalar;
-                if (!matrix_scalar_mul_inplace(res, res, val, multithreaded)) goto error;
-                break;
-            }
-            default:
-                goto error;
+        } else if (type == 4) {
+            if (!matrix_scalar_mul_inplace(res, res, ops[i].operand.scalar, multithreaded)) goto error;
         }
     }
+
     return res;
 
 error:
@@ -162,16 +196,39 @@ error:
     return NULL;
 }
 
+inline Matrix* lazy_deligated_evaluation(Matrix* root, MatrixOp* ops, int num_ops, int multithreaded) {
+    Matrix* res = matrix_clone(root);
+    if (!res) return NULL;
 
-void debug_print_ops(const char* label, MatrixOp* ops, int count) {
-    printf("--- %s (%d ops) ---\n", label, count);
-    for (int i = 0; i < count; i++) {
-        printf("[%d] Type: %d | ", i, ops[i].op_type);
-        if (ops[i].op_type == 4) {
-            printf("Value: %f\n", ops[i].operand.scalar);
-        } else {
-            printf("Ptr: %p | Ver: %d\n", (void*)ops[i].operand.mat, ops[i].version);
+    for (int i = 0; i < num_ops; i++) {
+        Matrix* next = NULL;
+        int type = ops[i].op_type;
+        switch (type) {
+            case 0:
+                if (!matrix_add_inplace(res, ops[i].operand.mat, res, multithreaded)) goto error;
+                break;
+            case 1:
+                if (!matrix_sub_inplace(res, ops[i].operand.mat, res, multithreaded)) goto error;
+                break;
+            case 2:
+                next = matrix_mul(res, ops[i].operand.mat, multithreaded);
+                matrix_free(res);
+                res = next;
+                break;
+            case 3:
+                next = matrix_mul(ops[i].operand.mat, res, multithreaded);
+                matrix_free(res);
+                res = next;
+                break;
+            case 4:
+                if (!matrix_scalar_mul_inplace(res, res, ops[i].operand.scalar, multithreaded)) goto error;
+                break;
         }
+        if (!res) return NULL;
     }
-    printf("--------------------------\n");
+    return res;
+
+error:
+    if (res) matrix_free(res);
+    return NULL;
 }

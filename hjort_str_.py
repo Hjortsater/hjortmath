@@ -1,17 +1,30 @@
 import shutil
-from math import floor, ceil
+from math import floor, log10
 from hjortMatrixHelper import CFunc
 from hjortMatrix import SETTINGS
 
 def round_to_sig_figs(x, n):
-    if x == 0 and not SETTINGS.suppress_zeroes:
-        return "0." + "0" * (n - 1)
-    elif x == 0 and SETTINGS.suppress_zeroes:
-        return " "*(floor(n/2))+SETTINGS.suppress_zeroes[0]+" "*(ceil(n/2))
+    to_return: str = str(x)
+    to_return += "0"*(20-len(to_return))
+    x = float(to_return[:n+1])
+
+
+    if x == 0:
+        if not SETTINGS.suppress_zeroes:
+            return "0." + "0" * (n - 1)
+        else:
+            return " " * (n // 2) + SETTINGS.suppress_zeroes[0] + " " * ((n+1) // 2)
+
+    decimal_places = n - int(floor(log10(abs(x)))) - 1
+    rounded = round(x, decimal_places)
+
+    s = f"{rounded:.{max(decimal_places,0)}f}"
+    if "." in s:
+        s = s.rstrip("0").rstrip(".")
     
-    formatted = f"{x:#.{n}g}"
-    
-    return formatted.replace("e+0", "e").replace("e-0", "e-")
+    return s
+
+
 
 def colorize(value: str, float_value: float, min_val: float, max_val: float, use_color: bool) -> str:
     if not use_color:
@@ -35,7 +48,7 @@ def hjort_str_(self) -> str:
     
     min_val = CFunc.matrix_get_min(self._ptr)
     max_val = CFunc.matrix_get_max(self._ptr)
-    term_width = shutil.get_terminal_size().columns
+    term_width = shutil.get_terminal_size().columns - 10
 
     max_str_len = 0
     check_rows = entries[:limit_prints] if limit_prints else entries
