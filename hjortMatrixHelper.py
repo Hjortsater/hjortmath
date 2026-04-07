@@ -43,5 +43,9 @@ class CFunc:
     matrix_determinant = _lib.matrix_determinant
     matrix_log_determinant = _lib.matrix_log_determinant
     matrix_to_list = _lib.matrix_to_list
+    matrix_elementwise_mul = _lib.matrix_elementwise_mul
+    matrix_scalar_mul_add = _lib.matrix_scalar_mul_add
+    matrix_scalar_mul_sub = _lib.matrix_scalar_mul_sub
+    matrix_from_list = _lib.matrix_from_list
 
-    matrix_evaluate_kernel = _liblazy.matrix_evaluate_kernel
+    matrix_evaluate_stack_kernel = _liblazy.matrix_lazy_evaluate

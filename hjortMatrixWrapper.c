@@ -330,6 +330,101 @@ static PyObject* py_matrix_scalar_mul_inplace(PyObject* self, PyObject* args, Py
     Py_RETURN_TRUE;
 }
 
+static PyObject* py_matrix_elementwise_mul(PyObject* self, PyObject* args, PyObject* kwargs) {
+    PyObject *capsule_a, *capsule_b;
+    int multithreaded = 1;
+    static char *kwlist[] = {"A", "B", "multithreaded", NULL};
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OO|p", kwlist,
+                                     &capsule_a, &capsule_b, &multithreaded))
+        return NULL;
+
+    Matrix* A = PyCapsule_GetPointer(capsule_a, "hjortMatrixWrapper.Matrix");
+    Matrix* B = PyCapsule_GetPointer(capsule_b, "hjortMatrixWrapper.Matrix");
+
+    if (!A || !B) {
+        PyErr_SetString(PyExc_ValueError, "Invalid matrix capsule.");
+        return NULL;
+    }
+
+    Matrix* C;
+
+    Py_BEGIN_ALLOW_THREADS
+    C = matrix_elementwise_mul(A, B, multithreaded);
+    Py_END_ALLOW_THREADS
+
+    if (!C) {
+        PyErr_SetString(PyExc_RuntimeError, "Elementwise multiplication failed.");
+        return NULL;
+    }
+
+    return wrap_matrix(C);
+}
+
+static PyObject* py_matrix_scalar_mul_add(PyObject* self, PyObject* args, PyObject* kwargs) {
+    PyObject *capsule_a, *capsule_b;
+    double scalar;
+    int multithreaded = 1;
+    static char *kwlist[] = {"A", "B", "scalar", "multithreaded", NULL};
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OOd|p", kwlist,
+                                     &capsule_a, &capsule_b, &scalar, &multithreaded))
+        return NULL;
+
+    Matrix* A = PyCapsule_GetPointer(capsule_a, "hjortMatrixWrapper.Matrix");
+    Matrix* B = PyCapsule_GetPointer(capsule_b, "hjortMatrixWrapper.Matrix");
+
+    if (!A || !B) {
+        PyErr_SetString(PyExc_ValueError, "Invalid matrix capsule.");
+        return NULL;
+    }
+
+    Matrix* C;
+
+    Py_BEGIN_ALLOW_THREADS
+    C = matrix_scalar_mul_add(A, B, scalar, multithreaded);
+    Py_END_ALLOW_THREADS
+
+    if (!C) {
+        PyErr_SetString(PyExc_RuntimeError, "Scalar mul add failed.");
+        return NULL;
+    }
+
+    return wrap_matrix(C);
+}
+
+static PyObject* py_matrix_scalar_mul_sub(PyObject* self, PyObject* args, PyObject* kwargs) {
+    PyObject *capsule_a, *capsule_b;
+    double scalar;
+    int multithreaded = 1;
+    static char *kwlist[] = {"A", "B", "scalar", "multithreaded", NULL};
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OOd|p", kwlist,
+                                     &capsule_a, &capsule_b, &scalar, &multithreaded))
+        return NULL;
+
+    Matrix* A = PyCapsule_GetPointer(capsule_a, "hjortMatrixWrapper.Matrix");
+    Matrix* B = PyCapsule_GetPointer(capsule_b, "hjortMatrixWrapper.Matrix");
+
+    if (!A || !B) {
+        PyErr_SetString(PyExc_ValueError, "Invalid matrix capsule.");
+        return NULL;
+    }
+
+    Matrix* C;
+
+    Py_BEGIN_ALLOW_THREADS
+    C = matrix_scalar_mul_sub(A, B, scalar, multithreaded);
+    Py_END_ALLOW_THREADS
+
+    if (!C) {
+        PyErr_SetString(PyExc_RuntimeError, "Scalar mul sub failed.");
+        return NULL;
+    }
+
+    return wrap_matrix(C);
+}
+
 static PyObject* py_matrix_random(PyObject* self, PyObject* args) {
     int m, n;
     double min, max;
@@ -659,6 +754,49 @@ static PyObject* py_matrix_to_list(PyObject* self, PyObject* args) {
     return outer;
 }
 
+static PyObject* py_matrix_from_list(PyObject* self, PyObject* args) {
+    PyObject* list;
+    if (!PyArg_ParseTuple(args, "O", &list)) return NULL;
+
+    if (!PyList_Check(list)) {
+        PyErr_SetString(PyExc_TypeError, "Expected list");
+        return NULL;
+    }
+
+    int m = PyList_Size(list);
+    if (m == 0) {
+        PyErr_SetString(PyExc_ValueError, "Empty list");
+        return NULL;
+    }
+
+    PyObject* first_row = PyList_GetItem(list, 0);
+    if (!PyList_Check(first_row)) {
+        PyErr_SetString(PyExc_TypeError, "Expected list of lists");
+        return NULL;
+    }
+
+    int n = PyList_Size(first_row);
+    double* data = (double*)malloc(m * n * sizeof(double));
+    if (!data) return PyErr_NoMemory();
+
+    for (int i = 0; i < m; i++) {
+        PyObject* row = PyList_GetItem(list, i);
+        if (!PyList_Check(row) || PyList_Size(row) != n) {
+            free(data);
+            PyErr_SetString(PyExc_ValueError, "Inconsistent row lengths");
+            return NULL;
+        }
+        for (int j = 0; j < n; j++) {
+            PyObject* item = PyList_GetItem(row, j);
+            data[i*n + j] = PyFloat_AsDouble(item);
+        }
+    }
+
+    Matrix* M = matrix_create_from_buffer(m, n, data);
+    free(data);
+    return wrap_matrix(M);
+}
+
 static PyMethodDef HjortMatrixWrapperMethods[] = {
     {"matrix_create", py_matrix_create, METH_VARARGS, ""},
     {"matrix_copy", py_matrix_copy, METH_VARARGS, ""},
@@ -680,6 +818,9 @@ static PyMethodDef HjortMatrixWrapperMethods[] = {
     {"matrix_mul_inplace", (PyCFunction)py_matrix_mul_inplace, METH_VARARGS | METH_KEYWORDS, ""},
     {"matrix_scalar_mul", (PyCFunction)py_matrix_scalar_mul, METH_VARARGS | METH_KEYWORDS, ""},
     {"matrix_scalar_mul_inplace", (PyCFunction)py_matrix_scalar_mul_inplace, METH_VARARGS | METH_KEYWORDS, ""},
+    {"matrix_elementwise_mul", (PyCFunction)py_matrix_elementwise_mul, METH_VARARGS | METH_KEYWORDS, ""},
+    {"matrix_scalar_mul_add", (PyCFunction)py_matrix_scalar_mul_add, METH_VARARGS | METH_KEYWORDS, ""},
+    {"matrix_scalar_mul_sub", (PyCFunction)py_matrix_scalar_mul_sub, METH_VARARGS | METH_KEYWORDS, ""},
     {"matrix_random", py_matrix_random, METH_VARARGS, ""},
     {"matrix_get_max", py_matrix_get_max, METH_VARARGS, ""},
     {"matrix_get_min", py_matrix_get_min, METH_VARARGS, ""},
@@ -693,6 +834,7 @@ static PyMethodDef HjortMatrixWrapperMethods[] = {
     {"matrix_determinant", (PyCFunction)py_matrix_determinant, METH_VARARGS | METH_KEYWORDS, ""},
     {"matrix_log_determinant", py_matrix_log_determinant, METH_VARARGS, ""},
     {"matrix_to_list", py_matrix_to_list, METH_VARARGS, ""},
+    {"matrix_from_list", py_matrix_from_list, METH_VARARGS, ""},
     {NULL, NULL, 0, NULL}
 };
 

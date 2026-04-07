@@ -61,6 +61,11 @@ double matrix_log_determinant(const Matrix* M, int* sign);
 double matrix_get_max(Matrix* M);
 double matrix_get_min(Matrix* M);
 
+// Elementwise operations
+Matrix* matrix_elementwise_mul(const Matrix* A, const Matrix* B, int multithreaded);
+Matrix* matrix_scalar_mul_add(const Matrix* A, const Matrix* B, double scalar, int multithreaded);
+Matrix* matrix_scalar_mul_sub(const Matrix* A, const Matrix* B, double scalar, int multithreaded);
+
 #ifdef __cplusplus
 }
 #endif

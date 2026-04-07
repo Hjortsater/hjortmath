@@ -447,6 +447,54 @@ int matrix_scalar_mul_inplace(Matrix* A, Matrix* C, double scalar, int multithre
 
 
 
+Matrix* matrix_elementwise_mul(const Matrix* A, const Matrix* B, int multithreaded) {
+    if (!A || !B || A->m != B->m || A->n != B->n) return NULL;
+    
+    Matrix* C = matrix_create(A->m, A->n);
+    if (!C) return NULL;
+    
+    #ifdef _OPENMP
+    #pragma omp parallel for if(multithreaded)
+    #endif
+    for (int i = 0; i < A->m * A->n; i++) {
+        C->data[i] = A->data[i] * B->data[i];
+    }
+    
+    return C;
+}
+
+Matrix* matrix_scalar_mul_add(const Matrix* A, const Matrix* B, double scalar, int multithreaded) {
+    if (!A || !B || A->m != B->m || A->n != B->n) return NULL;
+    
+    Matrix* C = matrix_create(A->m, A->n);
+    if (!C) return NULL;
+    
+    #ifdef _OPENMP
+    #pragma omp parallel for if(multithreaded)
+    #endif
+    for (int i = 0; i < A->m * A->n; i++) {
+        C->data[i] = (A->data[i] + B->data[i]) * scalar;
+    }
+    
+    return C;
+}
+
+Matrix* matrix_scalar_mul_sub(const Matrix* A, const Matrix* B, double scalar, int multithreaded) {
+    if (!A || !B || A->m != B->m || A->n != B->n) return NULL;
+    
+    Matrix* C = matrix_create(A->m, A->n);
+    if (!C) return NULL;
+    
+    #ifdef _OPENMP
+    #pragma omp parallel for if(multithreaded)
+    #endif
+    for (int i = 0; i < A->m * A->n; i++) {
+        C->data[i] = (A->data[i] - B->data[i]) * scalar;
+    }
+    
+    return C;
+}
+
 inline int matrix_lu_decompose(Matrix* M, int multithreaded); // Needed for determinant calculation
 
 Matrix* matrix_inverse(const Matrix* A, int multithreaded){

@@ -80,7 +80,7 @@ class Matrix:
         return Matrix._init_C_native(result_ptr)
     
     def __iadd__(self, other: Matrix) -> Matrix:
-        if not SETTINGS.mutable_eagers:
+        if not SETTINGS.mutable_eagers or self._ptr == other._ptr:
             return self.__add__(other)
         if not isinstance(other, Matrix): raise NotImplementedError
         self._version += 1
@@ -120,6 +120,12 @@ class Matrix:
         if isinstance(other, (int, float)):
             return self * other
         return NotImplemented
+    
+    def __matmul__(self, other: Matrix) -> Matrix:
+        if not isinstance(other, Matrix): raise NotImplementedError
+        if self.m != other.m or self.n != other.n: raise ValueError("Dimensions mismatch for elementwise mul.")
+        result_ptr = CFunc.matrix_elementwise_mul(self._ptr, other._ptr, int(SETTINGS.multithreaded))
+        return Matrix._init_C_native(result_ptr)
     
     def __imul__(self, other: Matrix) -> Matrix:
         if not SETTINGS.mutable_eagers:
@@ -174,10 +180,26 @@ class Matrix:
     def determinant(self) -> float:
         return CFunc.matrix_determinant(self._ptr, SETTINGS.multithreaded)
 
+    def to_list(self):
+        return CFunc.matrix_to_list(self._ptr)
+
+    def to_numpy(self):
+        import numpy as np
+        return np.array(self.to_list())
+
+    @classmethod
+    def from_list(cls, lst):
+        return cls._init_C_native(CFunc.matrix_from_list(lst))
+
+    @classmethod
+    def from_numpy(cls, arr):
+        return cls.from_list(arr.tolist())
+
     def evaluate(self) -> Self:
         print("Attempted to evaluate object of type Matrix")
         print("Perhaps the LazyMatrix intended was already evaluated, or the lazy_eval flag is set to dynamic (1)?")
         return self
+
 
 class LazyMatrix(Matrix):
     class OpEnum(IntEnum):
@@ -187,149 +209,249 @@ class LazyMatrix(Matrix):
         LML = 3
         SML = 4
         DIV = 5
+        HAD = 6
 
-    __slots__ = ("root", "ops", "operands", "versions","_ptr", "_version")
+    class Node:
+        __slots__ = ()
+        def simplify(self):
+            return self
 
-    def __init__(self, root, ops=None, operands=None, versions=None):
-        self.root = root
-        self.ops = ops if ops is not None else []
-        self.operands = operands if operands is not None else []
-        self.versions = versions if versions is not None else []
-        self._ptr = root._ptr
-        self._version = root._version
+    class Leaf(Node):
+        __slots__ = ("ptr", "version", "scalar", "is_scalar")
+        def __init__(self, ptr=None, version=0, scalar=None, is_scalar=False):
+            self.ptr = ptr
+            self.version = version
+            self.scalar = scalar
+            self.is_scalar = is_scalar
 
-    def __del__(self) -> None:
-        pass
+    class BinOp(Node):
+        __slots__ = ("op", "left", "right")
+        def __init__(self, op, left, right):
+            self.op = op
+            self.left = left
+            self.right = right
 
-    def __str__(self) -> str:
-        return self.evaluate().__str__()
+        def simplify(self):
+            l = self.left.simplify()
+            r = self.right.simplify()
 
-    def __repr__(self) -> str:
-        return self.evaluate().__repr__()
+            if self.op == LazyMatrix.OpEnum.ADD:
+                # Check if both operands are the same matrix
+                if isinstance(l, LazyMatrix.Leaf) and isinstance(r, LazyMatrix.Leaf):
+                    if not l.is_scalar and not r.is_scalar and l.ptr == r.ptr and l.version == r.version and l.ptr is not None:
+                        return LazyMatrix.BinOp(
+                            LazyMatrix.OpEnum.SML,
+                            LazyMatrix.Leaf(scalar=2.0, is_scalar=True),
+                            l
+                        )
+                
+                # Check if left is scalar mul and right is the same matrix
+                if isinstance(l, LazyMatrix.BinOp) and l.op == LazyMatrix.OpEnum.SML and isinstance(l.right, LazyMatrix.Leaf) and isinstance(r, LazyMatrix.Leaf):
+                    if not r.is_scalar and l.right.ptr == r.ptr and l.right.version == r.version and r.ptr is not None:
+                        return LazyMatrix.BinOp(
+                            LazyMatrix.OpEnum.SML,
+                            LazyMatrix.Leaf(scalar=l.left.scalar + 1.0, is_scalar=True),
+                            r
+                        )
+                
+                # Check if right is scalar mul and left is the same matrix
+                if isinstance(r, LazyMatrix.BinOp) and r.op == LazyMatrix.OpEnum.SML and isinstance(r.right, LazyMatrix.Leaf) and isinstance(l, LazyMatrix.Leaf):
+                    if not l.is_scalar and r.right.ptr == l.ptr and r.right.version == l.version and l.ptr is not None:
+                        return LazyMatrix.BinOp(
+                            LazyMatrix.OpEnum.SML,
+                            LazyMatrix.Leaf(scalar=r.left.scalar + 1.0, is_scalar=True),
+                            l
+                        )
+                
+                if isinstance(l, LazyMatrix.BinOp) and isinstance(r, LazyMatrix.BinOp):
+                    if l.op == LazyMatrix.OpEnum.SML and r.op == LazyMatrix.OpEnum.SML:
+                        if isinstance(l.right, LazyMatrix.Leaf) and isinstance(r.right, LazyMatrix.Leaf):
+                            if l.right.ptr == r.right.ptr and l.right.version == r.right.version and l.right.ptr is not None:
+                                return LazyMatrix.BinOp(
+                                    LazyMatrix.OpEnum.SML,
+                                    LazyMatrix.Leaf(scalar=l.left.scalar + r.left.scalar, is_scalar=True),
+                                    l.right
+                                )
+                
+                if isinstance(l, LazyMatrix.Leaf) and isinstance(r, LazyMatrix.BinOp):
+                    if r.op == LazyMatrix.OpEnum.SML and isinstance(r.right, LazyMatrix.Leaf):
+                        if l.ptr == r.right.ptr and l.version == r.right.version and l.ptr is not None:
+                            return LazyMatrix.BinOp(
+                                LazyMatrix.OpEnum.SML,
+                                LazyMatrix.Leaf(scalar=1.0 + r.left.scalar, is_scalar=True),
+                                l
+                            )
 
-    def __add__(self, other: Union[Matrix, LazyMatrix]) -> LazyMatrix:
-        if not isinstance(other, (Matrix, LazyMatrix)):
-            return NotImplemented
+            if self.op == LazyMatrix.OpEnum.SUB:
+                # Check if both operands are the same matrix: A - A = 0*A
+                if isinstance(l, LazyMatrix.Leaf) and isinstance(r, LazyMatrix.Leaf):
+                    if not l.is_scalar and not r.is_scalar and l.ptr == r.ptr and l.version == r.version and l.ptr is not None:
+                        return LazyMatrix.BinOp(
+                            LazyMatrix.OpEnum.SML,
+                            LazyMatrix.Leaf(scalar=0.0, is_scalar=True),
+                            l
+                        )
+                
+                # Check if left is scalar mul and right is the same matrix: k*A - A = (k-1)*A
+                if isinstance(l, LazyMatrix.BinOp) and l.op == LazyMatrix.OpEnum.SML and isinstance(l.right, LazyMatrix.Leaf) and isinstance(r, LazyMatrix.Leaf):
+                    if not r.is_scalar and l.right.ptr == r.ptr and l.right.version == r.version and r.ptr is not None:
+                        return LazyMatrix.BinOp(
+                            LazyMatrix.OpEnum.SML,
+                            LazyMatrix.Leaf(scalar=l.left.scalar - 1.0, is_scalar=True),
+                            r
+                        )
+                
+                # Check if right is scalar mul and left is the same matrix: A - k*A = (1-k)*A
+                if isinstance(r, LazyMatrix.BinOp) and r.op == LazyMatrix.OpEnum.SML and isinstance(r.right, LazyMatrix.Leaf) and isinstance(l, LazyMatrix.Leaf):
+                    if not l.is_scalar and r.right.ptr == l.ptr and r.right.version == l.version and l.ptr is not None:
+                        return LazyMatrix.BinOp(
+                            LazyMatrix.OpEnum.SML,
+                            LazyMatrix.Leaf(scalar=1.0 - r.left.scalar, is_scalar=True),
+                            l
+                        )
+                
+                if isinstance(l, LazyMatrix.BinOp) and isinstance(r, LazyMatrix.BinOp):
+                    if l.op == LazyMatrix.OpEnum.SML and r.op == LazyMatrix.OpEnum.SML:
+                        if isinstance(l.right, LazyMatrix.Leaf) and isinstance(r.right, LazyMatrix.Leaf):
+                            if l.right.ptr == r.right.ptr and l.right.version == r.right.version and l.right.ptr is not None:
+                                return LazyMatrix.BinOp(
+                                    LazyMatrix.OpEnum.SML,
+                                    LazyMatrix.Leaf(scalar=l.left.scalar - r.left.scalar, is_scalar=True),
+                                    l.right
+                                )
+                
+                if isinstance(l, LazyMatrix.Leaf) and isinstance(r, LazyMatrix.BinOp):
+                    if r.op == LazyMatrix.OpEnum.SML and isinstance(r.right, LazyMatrix.Leaf):
+                        if l.ptr == r.right.ptr and l.version == r.right.version and l.ptr is not None:
+                            return LazyMatrix.BinOp(
+                                LazyMatrix.OpEnum.SML,
+                                LazyMatrix.Leaf(scalar=1.0 - r.left.scalar, is_scalar=True),
+                                l
+                            )
 
-        new_ops = self.ops + [self.OpEnum.ADD]
-        new_operands = self.operands + [other]
+                # New: (X + Y) - Y = X
+                if isinstance(l, LazyMatrix.BinOp) and l.op == LazyMatrix.OpEnum.ADD:
+                    if isinstance(l.right, LazyMatrix.Leaf) and isinstance(r, LazyMatrix.Leaf):
+                        if l.right.ptr == r.ptr and l.right.version == r.version and r.ptr is not None:
+                            return l.left
+                    if isinstance(l.left, LazyMatrix.Leaf) and isinstance(r, LazyMatrix.Leaf):
+                        if l.left.ptr == r.ptr and l.left.version == r.version and r.ptr is not None:
+                            return l.right
+
+            return LazyMatrix.BinOp(self.op, l, r)
+
+    __slots__ = ("tree", "_ptr", "_version")
+
+    def __init__(self, tree_or_matrix):
+        if isinstance(tree_or_matrix, (Matrix, LazyMatrix)):
+            self.tree = self._to_node(tree_or_matrix)
+        else:
+            self.tree = tree_or_matrix
         
-        if isinstance(other, LazyMatrix):
-            new_versions = self.versions + [0]
+        if isinstance(self.tree, self.Leaf) and not self.tree.is_scalar:
+            self._ptr = self.tree.ptr
+            self._version = self.tree.version
         else:
-            new_versions = self.versions + [other._version]
+            self._ptr = 0
+            self._version = 0
 
-        return LazyMatrix(
-            root=self.root,
-            ops=new_ops,
-            operands=new_operands,
-            versions=new_versions
-        )
+    def _to_node(self, obj):
+        if isinstance(obj, LazyMatrix):
+            return obj.tree
+        if isinstance(obj, Matrix):
+            return self.Leaf(ptr=obj._ptr, version=obj._version)
+        if isinstance(obj, (int, float)):
+            return self.Leaf(scalar=float(obj), is_scalar=True)
+        return obj
 
+    def __add__(self, other):
+        result = LazyMatrix(self.BinOp(self.OpEnum.ADD, self.tree, self._to_node(other)))
+        if SETTINGS.lazy_eval == 0:
+            return result.evaluate()
+        return result
 
-    def __sub__(self, other: Union[Matrix, LazyMatrix]) -> LazyMatrix:
-            if not isinstance(other, (Matrix, LazyMatrix)):
-                return NotImplemented
+    def __sub__(self, other):
+        result = LazyMatrix(self.BinOp(self.OpEnum.SUB, self.tree, self._to_node(other)))
+        if SETTINGS.lazy_eval == 0:
+            return result.evaluate()
+        return result
 
-            new_ops = self.ops + [self.OpEnum.SUB]
-            new_operands = self.operands + [other]
-            
-            if isinstance(other, LazyMatrix):
-                new_versions = self.versions + [0]
-            else:
-                new_versions = self.versions + [other._version]
-
-            return LazyMatrix(
-                root=self.root,
-                ops=new_ops,
-                operands=new_operands,
-                versions=new_versions
-            )
-
-
-    def __mul__(self, other: Union[Matrix, LazyMatrix, int, float]) -> LazyMatrix:
+    def __mul__(self, other):
         if isinstance(other, (int, float)):
-            new_ops = self.ops + [self.OpEnum.SML]
-            new_operands = self.operands + [float(other)]
-            new_versions = self.versions + [0]
-        elif isinstance(other, (Matrix, LazyMatrix)):
-            new_ops = self.ops + [self.OpEnum.RML]
-            new_operands = self.operands + [other]
-            new_versions = self.versions + [getattr(other, "_version", 0)]
+            result = LazyMatrix(self.BinOp(self.OpEnum.SML, self._to_node(other), self.tree))
         else:
-            return NotImplemented
+            result = LazyMatrix(self.BinOp(self.OpEnum.RML, self.tree, self._to_node(other)))
+        if SETTINGS.lazy_eval == 0:
+            return result.evaluate()
+        return result
 
-        return LazyMatrix(
-            root=self.root,
-            ops=new_ops,
-            operands=new_operands,
-            versions=new_versions
-        )
-
-
-    def __rmul__(self, other: Union[Matrix, LazyMatrix, int, float]) -> LazyMatrix:
+    def __rmul__(self, other):
         if isinstance(other, (int, float)):
-            new_ops = self.ops + [self.OpEnum.SML]
-            new_operands = self.operands + [float(other)]
-            new_versions = self.versions + [0]
-        elif isinstance(other, (Matrix, LazyMatrix)):
-            new_ops = self.ops + [self.OpEnum.LML]
-            new_operands = self.operands + [other]
-            new_versions = self.versions + [getattr(other, "_version", 0)]
+            result = LazyMatrix(self.BinOp(self.OpEnum.SML, self._to_node(other), self.tree))
         else:
-            return NotImplemented
+            result = LazyMatrix(self.BinOp(self.OpEnum.LML, self._to_node(other), self.tree))
+        if SETTINGS.lazy_eval == 0:
+            return result.evaluate()
+        return result
 
-        return LazyMatrix(
-            root=self.root,
-            ops=new_ops,
-            operands=new_operands,
-            versions=new_versions
-        )
-
-
-    def __truediv__(self, other) -> LazyMatrix:
-        if isinstance(other, (int, float)): # NOTE Float scalar division
-            return LazyMatrix(self.root, self.ops + [(self.OpEnum.LML, 1.0/float(other))])
-        
-        if isinstance(other, (Matrix, LazyMatrix)):
-            return LazyMatrix(self.root, self.ops + [(self.OpEnum.DIV, other)])        
-        return NotImplemented
-
-    def __rtruediv__(self, other) -> LazyMatrix:
+    def __truediv__(self, other):
         if isinstance(other, (int, float)):
-            return (~self) * other
-        return NotImplemented
+            result = LazyMatrix(self * (1.0 / other))
+        else:
+            result = LazyMatrix(self.BinOp(self.OpEnum.DIV, self.tree, self._to_node(other)))
+        if SETTINGS.lazy_eval == 0:
+            return result.evaluate()
+        return result
 
-    def __itruediv__(self, other: Union[Matrix, int, float]) -> LazyMatrix:
-        return self / other
+    def __matmul__(self, other):
+        result = LazyMatrix(self.BinOp(self.OpEnum.HAD, self.tree, self._to_node(other)))
+        if SETTINGS.lazy_eval == 0:
+            return result.evaluate()
+        return result
 
+    def __iadd__(self, other):
+        return self + other
 
-    @alias("compute")
-    def evaluate(self) -> Matrix:
+    def evaluate(self):
+        stree = self.tree
+        ops_stack = []
 
-        ops_capsules = []
-        for op_type, operand, ver in zip(self.ops, self.operands, self.versions):
+        def build(node):
+            if isinstance(node, self.Leaf):
+                if node.is_scalar:
+                    ops_stack.append((int(self.OpEnum.SML), node.scalar, 0))
+                else:
+                    ops_stack.append((-1, node.ptr, node.version))
+                return
 
-            if isinstance(operand, LazyMatrix):
-                operand = operand.evaluate()
-                ver = getattr(operand, "_version", 0)
+            build(node.left)
+            build(node.right)
+            ops_stack.append((int(node.op), None, 0))
 
-            if op_type == self.OpEnum.SML:
-                ops_capsules.append((int(op_type), float(operand), ver))
-            else:
-                ops_capsules.append((int(op_type), operand._ptr, ver))
-
-        result_ptr = CFunc.matrix_evaluate_kernel(self.root._ptr, ops_capsules, int(SETTINGS.multithreaded), int(SETTINGS.simplify))
-
+        build(stree)
+        result_ptr = CFunc.matrix_evaluate_stack_kernel(
+            None,
+            ops_stack,
+            int(SETTINGS.multithreaded),
+            int(SETTINGS.simplify)
+        )
         return Matrix._init_C_native(result_ptr)
 
+    def __str__(self):
+        return self.evaluate().__str__()
 
-    @alias("inv")
+    def __repr__(self):
+        return self.evaluate().__repr__()
+
     @property
-    def inverse(self) -> Matrix:
-        return ~self
-    
-    @alias("det")
+    def m(self):
+        if self._ptr: return CFunc.matrix_rows(self._ptr)
+        return self.evaluate().m
+
     @property
-    def determinant(self) -> float:
-        return self.evaluate().determinant
+    def n(self):
+        if self._ptr: return CFunc.matrix_cols(self._ptr)
+        return self.evaluate().n
+
+    def to_numpy(self):
+        return self.evaluate().to_numpy()
