@@ -15,16 +15,8 @@ ext1 = Extension(
     **common_args
 )
 
-# Extension 2: Lazy Evaluation
-# ADD 'hjortLazyEvaluate.c' HERE
-ext2 = Extension(
-    "hjortLazyMatrixWrapper",
-    sources=["hjortLazyMatrixWrapper.c", "hjortMatrixBackend.c", "hjortLazyEvaluate.c"],
-    **common_args
-)
-
 setup(
     name="hjortMath",
     version="1.0",
-    ext_modules=[ext1, ext2],
+    ext_modules=[ext1],
 )

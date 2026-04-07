@@ -1,5 +1,4 @@
 import hjortMatrixWrapper as _lib
-import hjortLazyMatrixWrapper as _liblazy
 """
 
 File which handles ctypes boilerplate and exposes C-functions in a public CFunc class.
@@ -47,5 +46,3 @@ class CFunc:
     matrix_scalar_mul_add = _lib.matrix_scalar_mul_add
     matrix_scalar_mul_sub = _lib.matrix_scalar_mul_sub
     matrix_from_list = _lib.matrix_from_list
-
-    matrix_evaluate_stack_kernel = _liblazy.matrix_lazy_evaluate

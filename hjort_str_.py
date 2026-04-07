@@ -4,25 +4,26 @@ from hjortMatrixHelper import CFunc
 from hjortMatrix import SETTINGS
 
 def round_to_sig_figs(x, n):
-    to_return: str = str(x)
-    to_return += "0"*(20-len(to_return))
-    x = float(to_return[:n+1])
-
-
     if x == 0:
         if not SETTINGS.suppress_zeroes:
             return "0." + "0" * (n - 1)
         else:
             return " " * (n // 2) + SETTINGS.suppress_zeroes[0] + " " * ((n+1) // 2)
 
-    decimal_places = n - int(floor(log10(abs(x)))) - 1
+    sign = "-" if x < 0 else ""
+    x = abs(x)
+    decimal_places = n - int(floor(log10(x))) - 1
     rounded = round(x, decimal_places)
 
-    s = f"{rounded:.{max(decimal_places,0)}f}"
+    if decimal_places > 0:
+        s = f"{rounded:.{decimal_places}f}"
+    else:
+        s = f"{rounded:.0f}"
+
     if "." in s:
         s = s.rstrip("0").rstrip(".")
-    
-    return s
+
+    return sign + s
 
 
 
