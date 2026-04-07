@@ -133,25 +133,25 @@ class Matrix:
         return self
     
     def __truediv__(self, other: Union[Matrix, int, float]) -> Matrix:
-        """Left inverse: A / B solves B @ X = A for X."""
+        """Right inverse: A / B solves A @ X = B for X."""
         if isinstance(other, (int, float)):
             return self * (1.0 / other)
         if isinstance(other, Matrix):
-            # Solve B @ X = A for X
-            result_ptr = CFunc.matrix_solve(other._ptr, self._ptr)
+            # Solve A @ X = B for X
+            result_ptr = CFunc.matrix_solve(self._ptr, other._ptr)
             if not result_ptr:
-                raise ValueError("Singular matrix in left division")
+                raise ValueError("Singular matrix in division")
             return Matrix._init_C_native(result_ptr)
         raise NotImplementedError
     
     def __floordiv__(self, other: Matrix) -> Matrix:
-        """Right inverse: A // B solves A @ X = B for X."""
+        """Left inverse: A // B solves B @ X = A for X."""
         if not isinstance(other, Matrix):
             raise NotImplementedError
-        # Solve A @ X = B for X
-        result_ptr = CFunc.matrix_solve(self._ptr, other._ptr)
+        # Solve B @ X = A for X
+        result_ptr = CFunc.matrix_solve(other._ptr, self._ptr)
         if not result_ptr:
-            raise ValueError("Singular matrix in right division")
+            raise ValueError("Singular matrix in left division")
         return Matrix._init_C_native(result_ptr)
 
     @property
