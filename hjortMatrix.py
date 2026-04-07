@@ -133,15 +133,26 @@ class Matrix:
         return self
     
     def __truediv__(self, other: Union[Matrix, int, float]) -> Matrix:
+        """Left inverse: A / B solves B @ X = A for X."""
         if isinstance(other, (int, float)):
             return self * (1.0 / other)
         if isinstance(other, Matrix):
-            result_ptr = CFunc.matrix_solve(self._ptr, other._ptr)
+            # Solve B @ X = A for X
+            result_ptr = CFunc.matrix_solve(other._ptr, self._ptr)
+            if not result_ptr:
+                raise ValueError("Singular matrix in left division")
+            return Matrix._init_C_native(result_ptr)
+        raise NotImplementedError
+    
+    def __floordiv__(self, other: Matrix) -> Matrix:
+        """Right inverse: A // B solves A @ X = B for X."""
+        if not isinstance(other, Matrix):
+            raise NotImplementedError
+        # Solve A @ X = B for X
+        result_ptr = CFunc.matrix_solve(self._ptr, other._ptr)
         if not result_ptr:
-            raise ValueError("Singular matrix in inverse right multiplication")
+            raise ValueError("Singular matrix in right division")
         return Matrix._init_C_native(result_ptr)
-
-
 
     @property
     def m(self) -> int: return CFunc.matrix_rows(self._ptr)
@@ -171,6 +182,39 @@ class Matrix:
     @property
     def determinant(self) -> float:
         return CFunc.matrix_determinant(self._ptr, SETTINGS.multithreaded)
+    
+    @alias("ldet", "logdet")
+    @property
+    def log_determinant(self) -> float:
+        """Log determinant. Returns signed log|det(A)|."""
+        return CFunc.matrix_log_determinant(self._ptr)
+    
+    def solve(self, other: Matrix) -> Matrix:
+        """Solve A @ X = other for X. Equivalent to other / A."""
+        if not isinstance(other, Matrix):
+            raise TypeError("solve() expects a Matrix")
+        result_ptr = CFunc.matrix_solve(other._ptr, self._ptr)
+        if not result_ptr:
+            raise ValueError("Singular matrix in solve")
+        return Matrix._init_C_native(result_ptr)
+    
+    def solve_lstsq(self, other: Matrix) -> Matrix:
+        """Least squares solve: minimize ||A @ X - other||_2."""
+        if not isinstance(other, Matrix):
+            raise TypeError("solve_lstsq() expects a Matrix")
+        result_ptr = CFunc.matrix_solve_lstsq(self._ptr, other._ptr, int(SETTINGS.multithreaded))
+        if not result_ptr:
+            raise ValueError("Least squares solve failed")
+        return Matrix._init_C_native(result_ptr)
+    
+    def solve_spd(self, other: Matrix) -> Matrix:
+        """Solve for symmetric positive definite A: A @ X = other."""
+        if not isinstance(other, Matrix):
+            raise TypeError("solve_spd() expects a Matrix")
+        result_ptr = CFunc.matrix_solve_spd(self._ptr, other._ptr, int(SETTINGS.multithreaded))
+        if not result_ptr:
+            raise ValueError("Solve SPD failed (matrix may not be SPD or singular)")
+        return Matrix._init_C_native(result_ptr)
 
     def to_list(self):
         return CFunc.matrix_to_list(self._ptr)
@@ -187,7 +231,3 @@ class Matrix:
     def from_numpy(cls, arr):
         return cls.from_list(arr.tolist())
 
-    def evaluate(self) -> Self:
-        print("Attempted to evaluate object of type Matrix")
-        print("Matrix objects are already evaluated.")
-        return self
